@@ -684,13 +684,56 @@ function appIcon(a, cls) {
   return src ? `<img class="${cls}" src="${esc(src)}" alt="" onerror="this.style.visibility='hidden'">` : "";
 }
 
+const ICON_PLUS = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+
 function loadApps() {
   const apps = (getSettings().apps || []).filter((a) => a.label && a.target && appLink(a.target));
-  if (!apps.length) {
-    return setBody("apps", `<p class="muted small">Add buttons for your apps in Settings → App buttons.</p>`);
+  const grid = apps.length ? `<div class="apps">${apps.map((a) =>
+    `<a class="app-btn" href="${esc(appLink(a.target))}">${appIcon(a, "app-icon") || ICON_OPEN}<span>${esc(a.label)}</span></a>`).join("")}</div>` : "";
+  setBody("apps", grid + `<button type="button" class="add-app" id="add-app-open">${ICON_PLUS}Add shortcut</button>`);
+}
+
+// "Add shortcut": a small panel from the bottom to add one app button without going to Settings.
+function openAddApp() {
+  if ((getSettings().apps || []).length >= APP_SLOTS) {
+    return toast(`All ${APP_SLOTS} buttons are in use. Remove one in Settings → App buttons`);
   }
-  setBody("apps", `<div class="apps">${apps.map((a) =>
-    `<a class="app-btn" href="${esc(appLink(a.target))}">${appIcon(a, "app-icon") || ICON_OPEN}<span>${esc(a.label)}</span></a>`).join("")}</div>`);
+  const sheet = $("#add-app");
+  sheet.querySelector("form").reset();
+  sheet.hidden = false;
+  requestAnimationFrame(() => sheet.classList.add("open"));
+  setTimeout(() => $("#add-app-label").focus(), 50);
+}
+
+function closeAddApp() {
+  const sheet = $("#add-app");
+  sheet.classList.remove("open");
+  setTimeout(() => { sheet.hidden = true; }, 200);
+}
+
+async function saveNewApp(e) {
+  e.preventDefault();
+  const label = $("#add-app-label").value.trim();
+  const target = $("#add-app-target").value.trim();
+  if (!label || !target) return toast("Add both a label and a Shortcut name or link");
+  if (!appLink(target)) return toast("That link type isn't allowed");
+  const btn = $("#add-app-ok");
+  btn.disabled = true;
+  btn.textContent = "Finding icon…";
+  const found = await findAppIcon(label);
+  btn.disabled = false;
+  btn.textContent = "Add";
+
+  const next = getSettings();
+  const apps = next.apps || [];
+  if (apps.length >= APP_SLOTS) return toast(`All ${APP_SLOTS} buttons are in use`);
+  apps.push({ label, target, ...(found?.icon ? found : {}) });
+  next.apps = apps;
+  saveSettings(next);
+  closeAddApp();
+  renderAppRows();
+  loadApps();
+  toast(found?.icon ? `Added ${label}` : `Added ${label} (no icon found)`);
 }
 
 const ICON_GRIP = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14M5 12h14M5 16h14"/></svg>';
@@ -965,6 +1008,11 @@ function init() {
   $("#save-ring").addEventListener("click", saveRingSettings);
   renderAppRows();
   $("#save-apps").addEventListener("click", saveAppSettings);
+  $("#add-app form").addEventListener("submit", saveNewApp);
+  $("#add-app").addEventListener("click", (e) => {
+    if (e.target.id === "add-app" || e.target.closest("[data-close]")) closeAddApp();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#add-app").hidden) closeAddApp(); });
   $("#app-rows").addEventListener("pointerdown", (e) => {
     const grip = e.target.closest("[data-app-grip]");
     if (grip && e.isPrimary) startAppDrag(e, grip);
@@ -987,6 +1035,7 @@ function init() {
     if (pick) return togglePick(pick.dataset.pick);
     const bell = e.target.closest("[data-notify]");
     if (bell) return toggleNotify(bell);
+    if (e.target.closest("#add-app-open")) return openAddApp();
     const train = e.target.closest("[data-train]");
     if (train && train.dataset.train) return toggleTrain(train.dataset.train);
     const delta = e.target.closest("[data-delta]");

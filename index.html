@@ -115,6 +115,19 @@
 
   <div id="toast" hidden></div>
   <div id="zoom" hidden><img alt=""><p class="small"></p></div>
+  <div id="add-app" class="sheet" hidden>
+    <form class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="add-app-title" novalidate>
+      <p id="add-app-title" class="sheet-title">Add shortcut</p>
+      <label class="small muted" for="add-app-label">Label</label>
+      <input id="add-app-label" type="text" placeholder="e.g. Spotify" autocomplete="off">
+      <label class="small muted" for="add-app-target">Shortcut name or link</label>
+      <input id="add-app-target" type="text" placeholder="e.g. Open Spotify, or spotify:" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
+      <div class="sheet-actions">
+        <button class="btn btn-quiet" type="button" data-close>Cancel</button>
+        <button id="add-app-ok" class="btn" type="submit">Add</button>
+      </div>
+    </form>
+  </div>
   <div id="sheet" hidden>
     <div class="sheet-card" role="alertdialog" aria-modal="true" aria-labelledby="sheet-text">
       <p id="sheet-text">Are you sure?</p>
