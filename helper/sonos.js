@@ -7,6 +7,7 @@
 
 import { createSocket } from "node:dgram";
 import { networkInterfaces } from "node:os";
+import { createHash } from "node:crypto";
 
 const SSDP_SEARCH = [
   "M-SEARCH * HTTP/1.1",
@@ -141,12 +142,50 @@ async function readRoom(room) {
     id: room.id,
     name: room.name,
     group: room.group,
+    fadeLeft: fadeLeft(room.id),
     volume: Number(v.match(/<CurrentVolume>(\d+)<\/CurrentVolume>/)?.[1] ?? 0),
     muted: m.match(/<CurrentMute>(\d)<\/CurrentMute>/)?.[1] === "1",
   };
 }
 
-// [{ id, name, group, volume, muted }]; a speaker that doesn't answer is left out.
+// What a group is playing: { state: "playing" | "paused", title, artist, album, art } or null.
+// "art" is the artwork's address as the speaker gave it (kept here; the phone gets it through /sonos/art).
+async function nowPlaying(host) {
+  const [t, p, m] = await Promise.all(["GetTransportInfo", "GetPositionInfo", "GetMediaInfo"].map((a) => transport(host, a)));
+  const state = t.match(/<CurrentTransportState>([^<]*)/)?.[1] || "";
+  if (!/^(PLAYING|TRANSITIONING|PAUSED_PLAYBACK)$/.test(state)) return null;
+  const meta = xmlUnescape(p.match(/<TrackMetaData>([\s\S]*?)<\/TrackMetaData>/)?.[1] || "");
+  const media = xmlUnescape(m.match(/<CurrentURIMetaData>([\s\S]*?)<\/CurrentURIMetaData>/)?.[1] || "");
+  const tag = (xml, name) => xmlUnescape(xml.match(new RegExp(`<${name}(?:\\s[^>]*)?>([^<]*)</${name}>`))?.[1] || "").trim();
+  const uri = xmlUnescape(p.match(/<TrackURI>([^<]*)/)?.[1] || "");
+  let title = tag(meta, "dc:title");
+  let artist = tag(meta, "dc:creator");
+  let album = tag(meta, "upnp:album");
+  const stream = tag(meta, "r:streamContent"); // radio: usually "Artist - Song"
+  const source = tag(media, "dc:title"); // radio station or playlist name
+  if (uri.startsWith("x-sonos-htastream:")) { title = "TV"; artist = ""; album = ""; }
+  else if (uri.startsWith("x-rincon-stream:")) { title = "Line-in"; artist = ""; album = ""; }
+  else if (stream) {
+    const [a, ...rest] = stream.split(" - ");
+    if (rest.length) { artist = a; title = rest.join(" - "); } else title = stream;
+    album = source || album;
+  }
+  if ((!title || /^(x-|https?:)|\.(mp3|aac|m3u8?)$/i.test(title)) && source) title = source; // not a real title
+  if (!title) return null;
+  const art = tag(meta, "upnp:albumArtURI");
+  return {
+    state: state === "PAUSED_PLAYBACK" ? "paused" : "playing",
+    title, artist, album,
+    art: art ? new URL(art, `http://${host}:1400`).href : "",
+  };
+}
+
+// Artwork addresses the speakers reported, by the room leading the group.
+// The art endpoint only ever fetches one of these, never an address from the request.
+const artByLead = new Map();
+
+// [{ id, name, group, fadeLeft, volume, muted, playing }]; a speaker that doesn't answer is left out.
+// "playing" is { state, title, artist, album, artKey } for the room's group, or null.
 export async function sonosRooms() {
   let rooms = await getRoomList();
   let read = await Promise.all(rooms.map((r) => readRoom(r).catch(() => null)));
@@ -154,11 +193,33 @@ export async function sonosRooms() {
     rooms = await topology(true);
     read = await Promise.all(rooms.map((r) => readRoom(r).catch(() => null)));
   }
-  return read.filter(Boolean);
+  const leadOf = (r) => (rooms.some((x) => x.id === r.group) ? r.group : r.id);
+  const leads = [...new Set(rooms.map(leadOf))];
+  const now = new Map(await Promise.all(leads.map(async (lead) =>
+    [lead, await nowPlaying(rooms.find((r) => r.id === lead).host).catch(() => null)])));
+  artByLead.clear();
+  for (const [lead, np] of now) if (np?.art) artByLead.set(lead, np.art);
+  return read.filter(Boolean).map((r) => {
+    const np = now.get(leadOf(r));
+    const { art, ...rest } = np || {};
+    return { ...r, playing: np ? { ...rest, artKey: art ? createHash("sha1").update(art).digest("hex").slice(0, 12) : null } : null };
+  });
+}
+
+// The artwork for what the group led by "id" is playing: { type, body } or null.
+export async function sonosArt(id) {
+  const url = artByLead.get(String(id || ""));
+  if (!url) return null;
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const type = res.headers.get("content-type") || "";
+  if (!res.ok || !type.startsWith("image/")) return null;
+  const body = Buffer.from(await res.arrayBuffer());
+  return body.length <= 5 * 1024 * 1024 ? { type, body } : null;
 }
 
 export async function sonosSetVolume(id, volume) {
   const room = await roomById(id);
+  if (fade) fade.rooms = fade.rooms.filter((r) => r.id !== room.id); // you've taken over this room
   const v = Math.max(0, Math.min(100, Math.round(Number(volume))));
   if (!Number.isFinite(v)) throw Object.assign(new Error("volume must be 0 to 100"), { status: 400 });
   await rendering(room.host, "SetVolume", `<DesiredVolume>${v}</DesiredVolume>`);
@@ -193,4 +254,77 @@ export async function sonosLeave(id) {
   const room = await roomById(id);
   await transport(room.host, "BecomeCoordinatorOfStandaloneGroup");
   return { id: room.id, group: room.id };
+}
+
+// ---------------------------- Fade out ----------------------------
+// Turns every playing room down by a tenth of its starting volume every
+// 10 seconds. At zero it pauses the music and puts the volumes back, so the
+// next time you press play it isn't silent. Runs here, so it carries on when
+// the phone is locked.
+
+const FADE_STEPS = 10;
+const FADE_STEP_SECONDS = 10;
+let fade = null; // { timer, step, rooms: [{ id, host, lead, start }] }
+
+const isPlaying = async (host) =>
+  /<CurrentTransportState>(PLAYING|TRANSITIONING)<\/CurrentTransportState>/.test(await transport(host, "GetTransportInfo"));
+
+// Seconds until the fade finishes for this room, or null when it isn't fading.
+function fadeLeft(id) {
+  if (!fade || !fade.rooms.some((r) => r.id === id)) return null;
+  return (FADE_STEPS - fade.step) * FADE_STEP_SECONDS;
+}
+
+async function fadeStep() {
+  const f = fade;
+  if (!f) return;
+  f.step++;
+  if (f.step < FADE_STEPS) {
+    await Promise.all(f.rooms.map((r) =>
+      rendering(r.host, "SetVolume", `<DesiredVolume>${Math.round(r.start * (1 - f.step / FADE_STEPS))}</DesiredVolume>`).catch(() => {})));
+    return;
+  }
+  clearInterval(f.timer);
+  fade = null;
+  await Promise.all(f.rooms.map((r) => rendering(r.host, "SetVolume", "<DesiredVolume>0</DesiredVolume>").catch(() => {})));
+  // Pause each group, then put back the volume only where the pause worked
+  // (never turn music back up that's still playing).
+  const leads = [...new Set(f.rooms.map((r) => r.lead))];
+  const paused = new Set();
+  await Promise.all(leads.map(async (lead) => {
+    const host = lastRooms.find((r) => r.id === lead)?.host;
+    if (!host) return;
+    try { await transport(host, "Pause"); paused.add(lead); } catch (e) { console.error(new Date().toISOString(), "sonos fade pause", e.message); }
+  }));
+  await new Promise((done) => setTimeout(done, 1000));
+  await Promise.all(f.rooms.filter((r) => paused.has(r.lead)).map((r) =>
+    rendering(r.host, "SetVolume", `<DesiredVolume>${r.start}</DesiredVolume>`).catch(() => {})));
+}
+
+export async function sonosFade() {
+  if (fade) return { fading: true, seconds: (FADE_STEPS - fade.step) * FADE_STEP_SECONDS };
+  const rooms = await getRoomList();
+  const lead = (r) => (rooms.some((x) => x.id === r.group) ? r.group : r.id);
+  const leads = [...new Set(rooms.map(lead))];
+  const playing = new Set();
+  await Promise.all(leads.map(async (id) => {
+    try { if (await isPlaying(rooms.find((r) => r.id === id).host)) playing.add(id); } catch { /* not answering */ }
+  }));
+  const fading = rooms.filter((r) => playing.has(lead(r)));
+  if (!fading.length) throw Object.assign(new Error("nothing is playing"), { status: 409 });
+  const read = await Promise.all(fading.map(readRoom));
+  fade = {
+    step: 0,
+    rooms: fading.map((r, i) => ({ id: r.id, host: r.host, lead: lead(r), start: read[i].volume })),
+  };
+  fade.timer = setInterval(() => fadeStep().catch((e) => console.error(new Date().toISOString(), "sonos fade", e.message)), FADE_STEP_SECONDS * 1000);
+  await fadeStep(); // the first step straight away
+  return { fading: true, seconds: (FADE_STEPS - fade.step) * FADE_STEP_SECONDS, rooms: fade.rooms.map((r) => r.id) };
+}
+
+// Stops the fade and leaves the volume where it's got to.
+export function sonosStopFade() {
+  if (fade) clearInterval(fade.timer);
+  fade = null;
+  return { fading: false };
 }

@@ -283,7 +283,19 @@ input {
 }
 .tick:checked { background: var(--accent); border-color: var(--accent); }
 .tick:checked::after { opacity: 1; }
-.sonos-hint { padding-top: 10px; border-top: 1px solid var(--line); }
+.np { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; margin-bottom: 2px; border-bottom: 1px solid var(--line); }
+.np + .np { padding-top: 12px; }
+.np-art { width: 52px; height: 52px; flex: none; border-radius: 8px; object-fit: cover; background: var(--line); }
+.np-blank { display: grid; place-items: center; color: var(--muted); }
+.np-blank .icon { width: 24px; height: 24px; }
+.np-text { min-width: 0; }
+.np-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-paused .np-art, .np-paused .np-title { opacity: .6; }
+.np + .row { border-top: 0; }
+.sonos-fade { display: block; width: 100%; margin-top: 10px; background: var(--line); color: var(--text); font-variant-numeric: tabular-nums; }
+.sonos-fade[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.sonos-fade:disabled { opacity: .6; }
 .sonos-room input[type="range"]::-webkit-slider-runnable-track {
   height: 6px; border-radius: 3px; background: linear-gradient(to right, var(--fill) var(--val, 0%), var(--line) var(--val, 0%));
 }

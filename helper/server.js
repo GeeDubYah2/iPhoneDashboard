@@ -10,11 +10,14 @@
 //   POST /push/watch                 <- { id, crs, station, std }: alert when it's 10 min away
 //   POST /push/unwatch               stop watching
 //   POST /push/test                  <- { delaySeconds }: send a test notification (optionally later)
-//   GET  /sonos/rooms                -> [{ id, name, group, volume, muted }]
+//   GET  /sonos/rooms                -> [{ id, name, group, fadeLeft, volume, muted, playing }]
+//   GET  /sonos/art/:id              -> artwork for what room id's group is playing
 //   POST /sonos/volume               <- { id, volume }   (0 to 100)
 //   POST /sonos/mute                 <- { id, muted }
 //   POST /sonos/join                 <- { id, to }: room id plays along with room to's group
 //   POST /sonos/leave                <- { id }: room id leaves its group
+//   POST /sonos/fade                 fade out every playing room over 90 s, then pause
+//   POST /sonos/fade/stop            stop fading (the volume stays where it is)
 //
 // Every request needs "Authorization: Bearer <DASHBOARD_TOKEN>".
 
@@ -23,7 +26,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { RingApi } from "ring-client-api";
 import { addSubscription, notifyAll, phoneCount, publicKey, unwatchTrain, watchTrain } from "./notify.js";
-import { sonosJoin, sonosLeave, sonosRooms, sonosSetMute, sonosSetVolume } from "./sonos.js";
+import { sonosArt, sonosFade, sonosJoin, sonosLeave, sonosRooms, sonosSetMute, sonosSetVolume, sonosStopFade } from "./sonos.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || "";
@@ -123,6 +126,8 @@ const server = createServer(async (req, res) => {
       if (path === "/sonos/mute") return send(res, 200, await sonosSetMute(body.id, body.muted));
       if (path === "/sonos/join") return send(res, 200, await sonosJoin(body.id, body.to));
       if (path === "/sonos/leave") return send(res, 200, await sonosLeave(body.id));
+      if (path === "/sonos/fade") return send(res, 200, await sonosFade());
+      if (path === "/sonos/fade/stop") return send(res, 200, sonosStopFade());
       return send(res, 404, { error: "not found" });
     } catch (e) {
       if (path.startsWith("/sonos/")) console.error(new Date().toISOString(), path, e.message);
@@ -134,6 +139,12 @@ const server = createServer(async (req, res) => {
     // Quick check for the dashboard's status light; doesn't contact Ring.
     if (path === "/health") return send(res, 200, { ok: true, uptime: Math.round(process.uptime()) });
     if (path === "/push/key") return send(res, 200, { publicKey: publicKey() });
+
+    const art = path.match(/^\/sonos\/art\/([^/]+)$/);
+    if (art) {
+      const img = await sonosArt(decodeURIComponent(art[1])).catch(() => null);
+      return img ? send(res, 200, img.body, img.type) : send(res, 404, { error: "no artwork" });
+    }
 
     if (path === "/sonos/rooms") {
       try { return send(res, 200, await sonosRooms()); } catch (e) {

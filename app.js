@@ -883,9 +883,12 @@ async function toggleDevice(id) {
 // home network; without a helper the card shows demo rooms.
 
 const DEMO_ROOMS = [
-  { id: "demo-lr", name: "Living Room", group: "demo-lr", volume: 25, muted: false },
-  { id: "demo-k", name: "Kitchen", group: "demo-k", volume: 40, muted: false },
+  { id: "demo-lr", name: "Living Room", group: "demo-lr", volume: 25, muted: false,
+    playing: { state: "playing", title: "Song title", artist: "Artist name", album: "Album", artKey: null } },
+  { id: "demo-k", name: "Kitchen", group: "demo-k", volume: 40, muted: false, playing: null },
 ];
+const ICON_NOTE = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>';
+const sonosArtUrls = new Map(); // artKey -> picture shown on this phone
 const ICON_SPEAKER = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="wave" d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="cross" d="M16 9.5l5 5M21 9.5l-5 5"/></svg>';
 
 let sonosRooms = [];
@@ -917,13 +920,98 @@ function sonosRow(r) {
     `</div>`;
 }
 
+// One line per group that's playing or paused: artwork, title, artist and the rooms.
+function nowPlayingHtml() {
+  const seen = new Set();
+  return sonosRooms.map((r) => {
+    const lead = sonosLead(r);
+    if (seen.has(lead) || !r.playing) return "";
+    seen.add(lead);
+    const np = r.playing;
+    const rooms = sonosRooms.filter((x) => sonosLead(x) === lead).map((x) => x.name).join(" + ");
+    const art = np.artKey && sonosArtUrls.get(np.artKey);
+    return `<div class="np${np.state === "paused" ? " np-paused" : ""}">` +
+      (art ? `<img class="np-art" src="${art}" alt="">` : `<div class="np-art np-blank">${ICON_NOTE}</div>`) +
+      `<div class="grow np-text"><div class="np-title">${esc(np.title)}</div>` +
+      `<div class="small muted np-sub">${esc([np.artist, rooms].filter(Boolean).join(" · "))}</div></div>` +
+      (np.state === "paused" ? `<span class="small muted">Paused</span>` : "") +
+      `</div>`;
+  }).join("");
+}
+
 function renderSonos() {
   if (!sonosRooms.length) return setBody("sonos", `<p class="muted">No Sonos speakers found.</p>`);
   if (sonosPicked && !sonosRooms.some((r) => r.id === sonosPicked && !sonosGrouped(r))) sonosPicked = "";
-  setBody("sonos", sonosRooms.map(sonosRow).join("") +
-    (sonosRooms.length > 1
-      ? `<p class="small muted sonos-hint">Tick rooms to play them together. The first room you tick is the music they all play.</p>`
-      : ""));
+  setBody("sonos", nowPlayingHtml() + sonosRooms.map(sonosRow).join("") +
+    `<button class="btn sonos-fade" type="button" data-fade aria-pressed="false">Fade out</button>`);
+  updateFadeButton();
+}
+
+/* Fade out: the helper turns playing rooms down by a tenth every 10 seconds,
+   then pauses. It runs on the helper, so it carries on with the phone locked. */
+let fadeEndsAt = 0; // when the fade finishes, by this phone's clock
+let fadeTicker;
+let demoFade;
+
+const fadeSeconds = () => Math.max(0, Math.ceil((fadeEndsAt - Date.now()) / 1000));
+
+function showFadeTime() {
+  const btn = $("#sonos [data-fade]");
+  const left = fadeSeconds();
+  if (!btn) return left;
+  btn.setAttribute("aria-pressed", String(left > 0));
+  btn.textContent = left > 0 ? `Stop fade · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "Fade out";
+  return left;
+}
+
+// Counts down on the button each second; reads the rooms again every 10 s
+// so the sliders follow the fade.
+function updateFadeButton() {
+  clearInterval(fadeTicker);
+  if (!showFadeTime()) return;
+  fadeTicker = setInterval(() => {
+    const left = showFadeTime();
+    if (!left) { clearInterval(fadeTicker); recheckSonos(); }
+    else if (left % 10 === 5 && ringHelper() && currentTab === "devices" && document.visibilityState === "visible") guard("sonos");
+  }, 1000);
+}
+
+// Demo mode: the same fade, done here.
+function runDemoFade() {
+  const start = sonosRooms.map((r) => r.volume);
+  let step = 0;
+  const tick = () => {
+    step++;
+    sonosRooms.forEach((r, i) => { r.volume = Math.round(start[i] * (1 - step / 10)); });
+    if (step >= 10) { clearInterval(demoFade); demoFade = null; sonosRooms.forEach((r, i) => { r.volume = start[i]; }); fadeEndsAt = 0; toast("Faded out and paused"); }
+    renderSonos();
+  };
+  fadeEndsAt = Date.now() + 90000;
+  demoFade = setInterval(tick, 10000);
+  tick();
+}
+
+async function toggleFade() {
+  if (fadeSeconds() > 0) {
+    fadeEndsAt = 0;
+    if (demoFade) { clearInterval(demoFade); demoFade = null; }
+    updateFadeButton();
+    if (ringHelper()) helperPost("/sonos/fade/stop").catch((e) => toast("Couldn't stop the fade: " + e.message));
+    return;
+  }
+  if (!ringHelper()) return runDemoFade();
+  const btn = $("#sonos [data-fade]");
+  btn.disabled = true;
+  try {
+    const r = await helperPost("/sonos/fade");
+    fadeEndsAt = Date.now() + r.seconds * 1000;
+    updateFadeButton();
+    recheckSonos();
+  } catch (e) {
+    toast(/409/.test(e.message) ? "Nothing's playing" : "Couldn't start the fade: " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // After grouping, ask the speakers again once they've settled.
@@ -974,7 +1062,26 @@ async function loadSonos() {
   const rooms = await (await ringFetch("/sonos/rooms", 20000)).json();
   if (Date.now() - sonosTouched < 3000) return; // you're moving a slider; keep yours
   sonosRooms = rooms;
+  const left = Math.max(0, ...rooms.map((r) => r.fadeLeft || 0));
+  fadeEndsAt = left ? Date.now() + left * 1000 : 0;
   renderSonos();
+  loadSonosArt();
+}
+
+// Fetches artwork we haven't got yet (through the helper, which can reach the speakers).
+async function loadSonosArt() {
+  const wanted = new Map();
+  for (const r of sonosRooms) if (r.playing?.artKey) wanted.set(r.playing.artKey, sonosLead(r));
+  for (const [key, url] of sonosArtUrls) if (!wanted.has(key)) { URL.revokeObjectURL(url); sonosArtUrls.delete(key); }
+  const missing = [...wanted].filter(([key]) => !sonosArtUrls.has(key));
+  if (!missing.length) return;
+  await Promise.all(missing.map(async ([key, lead]) => {
+    try {
+      const blob = await (await ringFetch(`/sonos/art/${encodeURIComponent(lead)}`, 15000)).blob();
+      sonosArtUrls.set(key, URL.createObjectURL(blob));
+    } catch { /* no artwork; the note icon stays */ }
+  }));
+  if (Date.now() - sonosTouched >= 3000) renderSonos();
 }
 
 // While dragging: update the number now, send the volume at most every 300 ms.
@@ -1155,6 +1262,7 @@ function init() {
     if (train && train.dataset.train) return toggleTrain(train.dataset.train);
     const delta = e.target.closest("[data-delta]");
     if (delta) return nudgeTarget(parseFloat(delta.dataset.delta));
+    if (e.target.closest("[data-fade]")) return toggleFade();
     const mute = e.target.closest("[data-mute]");
     if (mute) return toggleMute(mute.dataset.mute);
     const sw = e.target.closest("[data-device]");
@@ -1169,6 +1277,11 @@ function init() {
   setInterval(() => {
     if (ringHelper() && currentTab === "home" && document.visibilityState === "visible") guard("camera");
   }, CONFIG.cameraRefreshSeconds * 1000);
+
+  // Keep "now playing" up to date on the Home tab.
+  setInterval(() => {
+    if (ringHelper() && currentTab === "devices" && document.visibilityState === "visible") guard("sonos");
+  }, 20 * 1000);
 
   // Keep an open train journey up to date.
   setInterval(() => {
