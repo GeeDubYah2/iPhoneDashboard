@@ -1,6 +1,6 @@
 // Network-first service worker: updates deploy immediately,
 // and the app shell still opens when you're offline.
-const CACHE = "dashboard-v1";
+const CACHE = "dashboard-v2";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -21,7 +21,8 @@ self.addEventListener("fetch", (e) => {
   // Only handle our own files; never cache API, weather or camera requests.
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    // "no-cache" makes the browser check for a newer file instead of reusing its HTTP cache
+    fetch(e.request, { cache: "no-cache" })
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));

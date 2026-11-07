@@ -2,6 +2,7 @@
 // Runs on a home PC, signs in to Ring with a refresh token and serves
 // camera snapshots to the dashboard. Settings come from .env (never committed).
 //
+//   GET /health                     -> { ok: true, uptime }
 //   GET /ring/cameras               -> [{ id, name, offline, battery }]
 //   GET /ring/cameras/:id/snapshot  -> image/jpeg
 //
@@ -76,6 +77,9 @@ const server = createServer(async (req, res) => {
 
   const path = new URL(req.url, "http://x").pathname;
   try {
+    // Quick check for the dashboard's status light; doesn't contact Ring.
+    if (path === "/health") return send(res, 200, { ok: true, uptime: Math.round(process.uptime()) });
+
     if (path === "/ring/cameras") {
       const cameras = await getCameras();
       return send(res, 200, cameras.map((c) => ({

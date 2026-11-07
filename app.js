@@ -115,16 +115,43 @@ async function placeName(lat, lon) {
   return "Your location";
 }
 
+// The 💼 button switches the card between home (phone location, then the
+// home town) and the work location. The choice is remembered on this phone.
+function showingWork() {
+  return store.get("wxPlace") === "work" && Boolean(getSettings().work);
+}
+
+function updateWorkButton() {
+  const on = showingWork();
+  const btn = $("#wx-work");
+  btn.setAttribute("aria-pressed", String(on));
+  btn.setAttribute("aria-label", on ? "Show weather at home" : "Show weather at work");
+}
+
+function toggleWorkWeather() {
+  if (!getSettings().work) return toast("Add your work location in Settings first");
+  store.set("wxPlace", showingWork() ? "home" : "work");
+  guard("weather");
+}
+
 async function loadWeather() {
+  updateWorkButton();
   let { lat, lon, name } = CONFIG.weather;
-  const town = getSettings().town;
-  if (town) ({ lat, lon, name } = town); // your own fallback town, if you've set one
-  const pos = (await getPosition()) || cachedPosition();
-  let namePromise = Promise.resolve(name);
-  if (pos) {
-    ({ lat, lon } = pos);
-    namePromise = placeName(lat, lon); // looked up alongside the forecast
-    store.set("loc", JSON.stringify(pos));
+  const settings = getSettings();
+  let namePromise;
+
+  if (showingWork()) {
+    ({ lat, lon, name } = settings.work);
+    namePromise = Promise.resolve("Work · " + name);
+  } else {
+    if (settings.town) ({ lat, lon, name } = settings.town); // your home fallback town, if you've set one
+    namePromise = Promise.resolve(name);
+    const pos = (await getPosition()) || cachedPosition();
+    if (pos) {
+      ({ lat, lon } = pos);
+      namePromise = placeName(lat, lon); // looked up alongside the forecast
+      store.set("loc", JSON.stringify(pos));
+    }
   }
   const url = "https://api.open-meteo.com/v1/forecast" +
     `?latitude=${lat}&longitude=${lon}` +
@@ -230,11 +257,14 @@ function ringHelper() {
   return h.url ? h : null;
 }
 
-async function ringFetch(path) {
+async function ringFetch(path, timeoutMs = 45000) {
   const h = ringHelper();
   let res;
   try {
-    res = await fetch(h.url + path, { headers: h.token ? { Authorization: "Bearer " + h.token } : {} });
+    res = await fetch(h.url + path, {
+      headers: h.token ? { Authorization: "Bearer " + h.token } : {},
+      signal: AbortSignal.timeout(timeoutMs),
+    });
   } catch {
     throw new Error("can't reach the Ring helper; is the PC on?");
   }
@@ -287,6 +317,25 @@ async function loadCamera() {
   setBody("camera",
     `<div class="cams">${cameras.map((c, i) => cameraTile(c.name, shots[i], c.offline ? "Offline" : "No snapshot yet")).join("")}</div>` +
     `<p class="muted small cam-note">Updated ${now} · tap a camera to enlarge</p>`);
+}
+
+// Traffic light in Settings → Status: green when the helper answers and accepts the token.
+let statusCheck = 0;
+async function loadStatus() {
+  const mine = ++statusCheck; // only the latest check may update the light
+  const set = (colour, text) => {
+    if (mine !== statusCheck) return;
+    $("#helper-light").className = "light " + colour;
+    $("#helper-state").textContent = text;
+  };
+  if (!ringHelper()) return set("red", "not set up yet (add it below)");
+  set("", "checking…");
+  try {
+    await ringFetch("/health", 8000);
+    set("green", "running and connected");
+  } catch (e) {
+    set("red", e.message);
+  }
 }
 
 function zoomCamera(img) {
@@ -376,7 +425,7 @@ let currentTab = "home";
 
 const LOADERS = {
   weather: loadWeather, trains: loadTrains, thermostat: loadThermostat,
-  camera: loadCamera, calendar: loadCalendar, tuya: loadDevices,
+  camera: loadCamera, calendar: loadCalendar, tuya: loadDevices, status: loadStatus,
 };
 
 async function guard(id) {
@@ -385,7 +434,8 @@ async function guard(id) {
 }
 
 function loadAll() {
-  const ids = currentTab === "devices" ? ["tuya"] : currentTab === "home" ? ["weather", "trains", "camera"] /* add "thermostat" and "calendar" back here, plus their cards in index.html */ : [];
+  const ids = currentTab === "devices" ? ["tuya"] : currentTab === "home" ? ["weather", "trains", "camera"] /* add "thermostat" and "calendar" back here, plus their cards in index.html */
+    : currentTab === "settings" ? ["status"] : [];
   ids.forEach(guard);
 }
 
@@ -403,28 +453,31 @@ function greet() {
   $("#today").textContent = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
 }
 
+async function geocode(text) {
+  const res = await fetch("https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&name=" + encodeURIComponent(text));
+  return (await res.json()).results?.[0] || null;
+}
+
 async function saveWeatherSettings() {
   const next = getSettings();
-  const townText = $("#town").value.trim();
-  let label = "";
+  const found = [];
 
-  if (!townText) {
-    delete next.town;
-  } else if (townText !== next.town?.name) {
-    try {
-      const res = await fetch("https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&name=" + encodeURIComponent(townText));
-      const hit = (await res.json()).results?.[0];
-      if (!hit) return toast("Couldn't find that town");
-      next.town = { name: hit.name, lat: hit.latitude, lon: hit.longitude };
-      label = [hit.name, hit.admin1, hit.country].filter(Boolean).join(", ");
-      $("#town").value = hit.name;
-    } catch {
-      return toast("Couldn't look up that town");
-    }
+  // key in settings, input id, name used in messages
+  for (const [key, inputId, what] of [["town", "town", "home"], ["work", "workTown", "work"]]) {
+    const text = $("#" + inputId).value.trim();
+    if (!text) { delete next[key]; continue; }
+    if (text === next[key]?.name) continue;
+    let hit;
+    try { hit = await geocode(text); } catch { return toast(`Couldn't look up the ${what} location`); }
+    if (!hit) return toast(`Couldn't find the ${what} location`);
+    next[key] = { name: hit.name, lat: hit.latitude, lon: hit.longitude };
+    $("#" + inputId).value = hit.name;
+    found.push(`${what[0].toUpperCase() + what.slice(1)}: ${[hit.name, hit.admin1, hit.country].filter(Boolean).join(", ")}`);
   }
 
+  if (!next.work && store.get("wxPlace") === "work") store.set("wxPlace", "home");
   saveSettings(next);
-  toast(label ? "Saved. Default location: " + label : "Saved");
+  toast(found.length ? "Saved. " + found.join(" · ") : "Saved");
   loadAll();
 }
 
@@ -466,6 +519,8 @@ function init() {
     : "Demo mode: no API is set in app.js yet, so the devices show sample data. The cameras use the Ring helper set below.";
   const saved = getSettings();
   $("#town").value = saved.town?.name || "";
+  $("#workTown").value = saved.work?.name || "";
+  $("#wx-work").addEventListener("click", toggleWorkWeather);
   $("#stationA").value = saved.stationA || "";
   $("#stationB").value = saved.stationB || "";
   $("#switchHour").value = Number.isInteger(saved.switchHour) ? saved.switchHour : "";

@@ -18,6 +18,7 @@ Your Ring login, refresh token and access token live only in `.env` and `ring-to
 
 | Endpoint | Returns |
 | --- | --- |
+| `GET /health` | `{ "ok": true, "uptime": 120 }` (for the status light; doesn't contact Ring) |
 | `GET /ring/cameras` | `[{ "id": "…", "name": "…", "offline": false, "battery": 80 }]` |
 | `GET /ring/cameras/:id/snapshot` | a JPEG image |
 

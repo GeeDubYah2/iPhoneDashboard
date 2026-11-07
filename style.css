@@ -63,6 +63,12 @@ p { margin: 0; }
 .time { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 48px; }
 
 /* Weather */
+#weather { position: relative; }
+.wx-toggle {
+  position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--bg); font-size: 17px; line-height: 1; padding: 0;
+}
+.wx-toggle[aria-pressed="true"] { border-color: var(--accent); background: rgba(77, 163, 255, .18); }
 .wx-now { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
 .temp { font-size: 48px; font-weight: 300; line-height: 1; }
 .strip { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 12px; scrollbar-width: none; }
@@ -119,6 +125,10 @@ input {
 }
 .btn { padding: 12px 20px; border: 0; border-radius: 10px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; }
 #mode { margin-bottom: 14px; }
+.status-row { display: flex; align-items: center; gap: 10px; }
+.light { width: 14px; height: 14px; border-radius: 50%; flex: none; background: var(--line); }
+.light.green { background: var(--good); box-shadow: 0 0 8px var(--good); }
+.light.red { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
 label { display: block; margin-top: 10px; }
 
 /* Nav + toast */

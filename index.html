@@ -25,7 +25,11 @@
 
   <main>
     <section id="page-home" class="page">
-      <article class="card" id="weather"><h2>Weather</h2><div class="body muted">Loading…</div></article>
+      <article class="card" id="weather">
+        <h2>Weather</h2>
+        <button id="wx-work" class="wx-toggle" aria-pressed="false" aria-label="Show weather at work">💼</button>
+        <div class="body muted">Loading…</div>
+      </article>
       <article class="card" id="trains"><h2>Trains</h2><div class="body muted">Loading…</div></article>
       <article class="card" id="camera"><h2>Camera</h2><div class="body muted">Loading…</div></article>
     </section>
@@ -39,14 +43,18 @@
         <h2>Status</h2>
         <div class="body">
           <p id="mode" class="muted"></p>
+          <div class="status-row"><span id="helper-light" class="light" aria-hidden="true"></span><span>Ring helper: <span id="helper-state" class="muted">checking…</span></span></div>
         </div>
       </article>
 
       <article class="card" id="weather-settings">
         <h2>Weather</h2>
         <div class="body">
-          <label class="small muted" for="town">Default location (used if your phone's location isn't available)</label>
+          <label class="small muted" for="town">Home: default location (used if your phone's location isn't available)</label>
           <input id="town" type="text" placeholder="e.g. Leeds" autocomplete="off">
+
+          <label class="small muted" for="workTown">Work location (shown when you tap 💼 on the weather card)</label>
+          <input id="workTown" type="text" placeholder="e.g. Manchester" autocomplete="off">
           <p class="small muted">Saved only on this phone.</p>
           <button id="save-weather" class="btn" style="margin-top:12px">Save</button>
         </div>
