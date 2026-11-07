@@ -114,14 +114,17 @@ p { margin: 0; }
 /* App buttons */
 .apps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .app-btn {
-  display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; padding: 8px;
-  border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--text);
-  font-size: 15px; text-decoration: none; text-align: center; overflow: hidden;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  min-height: 76px; padding: 10px 6px 8px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--text); font-size: 13px; text-decoration: none; text-align: center; overflow: hidden;
 }
 .app-btn:active { background: var(--line); }
-.app-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-btn .icon { width: 16px; height: 16px; flex: none; color: var(--muted); }
-.app-row { display: grid; grid-template-columns: 2fr 3fr; gap: 8px; }
+.app-btn span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-btn .icon { width: 26px; height: 26px; padding: 3px; flex: none; color: var(--muted); }
+.app-icon { width: 34px; height: 34px; border-radius: 8px; flex: none; }
+.app-row { display: grid; grid-template-columns: 30px 2fr 3fr; gap: 8px; align-items: center; }
+.app-preview { width: 30px; height: 30px; border-radius: 7px; background: var(--bg); border: 1px dashed var(--line); }
+img.app-preview { border: 0; }
 .app-row input { margin: 6px 0; }
 
 /* Switch */

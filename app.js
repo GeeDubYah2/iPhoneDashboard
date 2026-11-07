@@ -377,27 +377,50 @@ function appLink(target) {
   return ["javascript", "data", "vbscript", "file", "blob"].includes(scheme) ? "" : t;
 }
 
+// App icons come from Apple's public App Store search, looked up when you
+// save and remembered on this phone. Only icons hosted by Apple are shown.
+const safeIcon = (url) => (/^https:\/\/[a-z0-9.-]+\.mzstatic\.com\//i.test(url || "") ? url : "");
+
+async function findAppIcon(label) {
+  const country = (navigator.language.split("-")[1] || "us").toLowerCase();
+  try {
+    const res = await fetch("https://itunes.apple.com/search?entity=software&limit=1" +
+      `&country=${encodeURIComponent(country)}&term=${encodeURIComponent(label)}`, { signal: AbortSignal.timeout(6000) });
+    const hit = (await res.json()).results?.[0];
+    return hit ? { icon: safeIcon(hit.artworkUrl100), storeName: hit.trackName || "" } : null;
+  } catch {
+    return null; // offline or blocked; the button falls back to the plain icon
+  }
+}
+
+function appIcon(a, cls) {
+  const src = safeIcon(a.icon);
+  return src ? `<img class="${cls}" src="${esc(src)}" alt="" onerror="this.style.visibility='hidden'">` : "";
+}
+
 function loadApps() {
   const apps = (getSettings().apps || []).filter((a) => a.label && a.target && appLink(a.target));
   if (!apps.length) {
     return setBody("apps", `<p class="muted small">Add buttons for your apps in Settings → App buttons.</p>`);
   }
   setBody("apps", `<div class="apps">${apps.map((a) =>
-    `<a class="app-btn" href="${esc(appLink(a.target))}">${ICON_OPEN}<span>${esc(a.label)}</span></a>`).join("")}</div>`);
+    `<a class="app-btn" href="${esc(appLink(a.target))}">${appIcon(a, "app-icon") || ICON_OPEN}<span>${esc(a.label)}</span></a>`).join("")}</div>`);
 }
 
 function renderAppRows() {
   const saved = getSettings().apps || [];
   $("#app-rows").innerHTML = Array.from({ length: APP_SLOTS }, (_, i) => {
     const a = saved[i] || {};
-    return `<div class="app-row">` +
+    const preview = appIcon(a, "app-preview") || `<span class="app-preview"></span>`;
+    return `<div class="app-row" title="${esc(a.storeName || "")}">${preview}` +
       `<input data-app-label="${i}" type="text" placeholder="Label" value="${esc(a.label || "")}" autocomplete="off" aria-label="Button ${i + 1} label">` +
       `<input data-app-target="${i}" type="text" placeholder="Shortcut name or link" value="${esc(a.target || "")}" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" aria-label="Button ${i + 1} shortcut or link">` +
       `</div>`;
   }).join("");
 }
 
-function saveAppSettings() {
+async function saveAppSettings() {
+  const old = getSettings().apps || [];
   const apps = [];
   for (let i = 0; i < APP_SLOTS; i++) {
     const label = $(`[data-app-label="${i}"]`).value.trim();
@@ -407,11 +430,25 @@ function saveAppSettings() {
     if (!appLink(target)) return toast(`Button ${i + 1} has a link type that isn't allowed`);
     apps.push({ label, target });
   }
+
+  // Look up icons for new or renamed buttons; keep the ones already found.
+  const btn = $("#save-apps");
+  btn.disabled = true;
+  btn.textContent = "Finding icons…";
+  await Promise.all(apps.map(async (a) => {
+    const prev = old.find((o) => o.label === a.label && o.icon);
+    const found = prev ? { icon: prev.icon, storeName: prev.storeName } : await findAppIcon(a.label);
+    if (found?.icon) Object.assign(a, found);
+  }));
+  btn.disabled = false;
+  btn.textContent = "Save";
+
   const next = getSettings();
   if (apps.length) next.apps = apps; else delete next.apps;
   saveSettings(next);
   renderAppRows();
-  toast("Saved");
+  const missing = apps.filter((a) => !a.icon).map((a) => a.label);
+  toast(missing.length ? `Saved. No icon found for ${missing.join(", ")}` : "Saved");
 }
 
 /* ---------------------------- Calendar ---------------------------- */
