@@ -207,6 +207,7 @@ async function loadTrains() {
   const route = `${station} to ${esc(d.filterLocationName || to)}`;
   if (!list.length) return setBody("trains", `<p class="muted">No upcoming trains from ${route}.</p>`);
 
+  trainRoute = { from, to };
   const items = list.map((s) => {
     const status = s.isCancelled ? "Cancelled" : s.etd;
     const cls = s.isCancelled ? "bad" : status === "On time" ? "good" : "warn";
@@ -216,10 +217,108 @@ async function loadTrains() {
     const stop = (s.subsequentCallingPoints || []).flatMap((g) => g.callingPoint || []).find((p) => p.crs === to);
     const arr = stop ? (/^\d\d:\d\d$/.test(stop.et) ? stop.et : stop.st) : "";
     const arrives = arr ? `<div class="muted small">Arrives ${esc(arr)}</div>` : "";
-    return `<div class="row"><span class="time">${esc(s.std)}</span>` +
-      `<span class="grow">${dest}${plat}${arrives}</span><span class="${cls}">${esc(status)}</span></div>`;
+    const id = esc(s.serviceIdGuid || "");
+    return `<div class="row train" role="button" tabindex="0" aria-expanded="false" data-train="${id}">` +
+      `<span class="time">${esc(s.std)}</span>` +
+      `<span class="grow">${dest}${plat}${arrives}</span><span class="${cls}">${esc(status)}</span>` +
+      `<span class="chev" aria-hidden="true">${ICON_CHEVRON}</span></div>` +
+      `<div class="train-detail" data-train-detail="${id}" hidden></div>`;
   }).join("");
-  setBody("trains", `<p class="muted small">${route}</p>${items}`);
+  setBody("trains", `<p class="muted small">${route} · tap a train for its journey</p>${items}`);
+  if (openTrain && list.some((s) => s.serviceIdGuid === openTrain)) loadTrainDetail(openTrain);
+  else openTrain = null;
+}
+
+/* ---------------------- Train journey details ---------------------- */
+// Tapping a train shows every stop: where it has been (actual times), roughly
+// where it is now, and when it's expected at each stop still to come.
+
+const ICON_CHEVRON = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+let trainRoute = { from: "", to: "" };
+let openTrain = null; // the train whose journey is open, kept across refreshes
+
+const isTime = (v) => /^\d\d:\d\d$/.test(v || "");
+const toMins = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
+function minsLate(actual, scheduled) {
+  if (!isTime(actual) || !isTime(scheduled)) return 0;
+  const d = (toMins(actual) - toMins(scheduled) + 1440) % 1440; // handles midnight
+  return d > 720 ? d - 1440 : d;
+}
+const lateText = (m) => (m > 0 ? `${m} min late` : m < 0 ? `${-m} min early` : "on time");
+
+function toggleTrain(id) {
+  const opening = openTrain !== id;
+  document.querySelectorAll("[data-train]").forEach((r) => r.setAttribute("aria-expanded", "false"));
+  document.querySelectorAll("[data-train-detail]").forEach((b) => { b.hidden = true; });
+  openTrain = opening ? id : null;
+  if (opening) loadTrainDetail(id);
+}
+
+async function loadTrainDetail(id) {
+  const row = $(`[data-train="${CSS.escape(id)}"]`);
+  const box = $(`[data-train-detail="${CSS.escape(id)}"]`);
+  if (!row || !box) return;
+  row.setAttribute("aria-expanded", "true");
+  box.hidden = false;
+  if (!box.innerHTML) box.innerHTML = `<p class="muted small">Loading journey…</p>`;
+
+  let d;
+  try {
+    const res = await fetch(`${CONFIG.trains.api}/service/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) throw new Error();
+    d = await res.json();
+  } catch {
+    box.innerHTML = `<p class="muted small">Couldn't load this train's journey.</p>`;
+    return;
+  }
+  if (openTrain !== id) return; // closed while loading
+
+  const pts = (groups) => (groups || []).flatMap((g) => g.callingPoint || []);
+  const stops = [
+    ...pts(d.previousCallingPoints).map((p) => ({ ...p })),
+    { locationName: d.locationName, crs: d.crs, st: d.std, et: d.etd, at: d.atd, platform: d.platform, isCancelled: d.isCancelled },
+    ...pts(d.subsequentCallingPoints).map((p) => ({ ...p })),
+  ];
+  let last = -1; // last stop the train has actually left
+  stops.forEach((s, i) => { if (s.at) last = i; });
+
+  let where;
+  if (d.isCancelled) where = `<span class="bad">This train is cancelled</span>${d.cancelReason ? ` · ${esc(d.cancelReason)}` : ""}`;
+  else if (last < 0) where = `Not started yet · leaves ${esc(stops[0].locationName)} at ${esc(stops[0].st)}`;
+  else if (last === stops.length - 1) where = `Arrived at ${esc(stops[last].locationName)}`;
+  else {
+    const s = stops[last];
+    const t = isTime(s.at) ? s.at : s.st;
+    where = `Left ${esc(s.locationName)} at ${esc(t)} · ${lateText(minsLate(s.at, s.st))}`;
+  }
+
+  const items = stops.map((s, i) => {
+    const passed = i <= last;
+    const mine = s.crs === trainRoute.from || s.crs === trainRoute.to;
+    const cancelled = s.isCancelled || s.et === "Cancelled";
+    let time = s.st;
+    let note = "";
+    if (passed) {
+      time = isTime(s.at) ? s.at : s.st;
+      const late = minsLate(s.at, s.st);
+      if (late) note = `<span class="${late > 0 ? "warn" : "good"}">${late > 0 ? "+" : ""}${late}</span>`;
+    } else if (cancelled) {
+      note = `<span class="bad">Cancelled</span>`;
+    } else if (isTime(s.et) && s.et !== s.st) {
+      time = s.et;
+      note = `<span class="warn">was ${esc(s.st)}</span>`;
+    } else if (s.et && !isTime(s.et) && s.et !== "On time") {
+      note = `<span class="warn">${esc(s.et)}</span>`;
+    }
+    const plat = mine && s.platform ? ` <span class="muted">pl. ${esc(s.platform)}</span>` : "";
+    const here = i === last && last < stops.length - 1 && !d.isCancelled
+      ? `<li class="here"><span></span><span class="dot"></span><span class="small">Train is here</span><span></span></li>` : "";
+    return `<li class="${passed ? "passed" : ""}${mine ? " mine" : ""}">` +
+      `<span class="time">${esc(time || "")}</span><span class="dot"></span>` +
+      `<span class="stop">${esc(s.locationName)}${plat}</span><span class="small">${note}</span></li>${here}`;
+  }).join("");
+
+  box.innerHTML = `<p class="small train-where">${where}</p><ul class="stops">${items}</ul>`;
 }
 
 /* --------------------------- Thermostat --------------------------- */
@@ -699,6 +798,8 @@ function init() {
   document.addEventListener("click", (e) => {
     const zoom = e.target.closest("[data-zoom]");
     if (zoom) return zoomCamera(zoom);
+    const train = e.target.closest("[data-train]");
+    if (train && train.dataset.train) return toggleTrain(train.dataset.train);
     const delta = e.target.closest("[data-delta]");
     if (delta) return nudgeTarget(parseFloat(delta.dataset.delta));
     const sw = e.target.closest("[data-device]");
@@ -713,6 +814,15 @@ function init() {
   setInterval(() => {
     if (ringHelper() && currentTab === "home" && document.visibilityState === "visible") guard("camera");
   }, CONFIG.cameraRefreshSeconds * 1000);
+
+  // Keep an open train journey up to date.
+  setInterval(() => {
+    if (openTrain && currentTab === "home" && document.visibilityState === "visible") loadTrainDetail(openTrain);
+  }, 60 * 1000);
+  document.addEventListener("keydown", (e) => {
+    const train = e.target.closest?.("[data-train]");
+    if (train && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggleTrain(train.dataset.train); }
+  });
 
   showTab(["home", "devices", "settings"].includes(store.get("tab")) ? store.get("tab") : "home");
 
