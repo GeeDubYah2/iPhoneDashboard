@@ -93,17 +93,12 @@ p { margin: 0; }
 #sheet[hidden], .sheet[hidden] { display: none; }
 #sheet.open, .sheet.open { background: rgba(0, 0, 0, .5); }
 .sheet.open .sheet-card { transform: translateY(0); }
-.sheet-title { margin: 0 0 6px; font-size: 17px; font-weight: 600; text-align: center; }
-.sheet-card input { margin-bottom: 8px; }
-.sheet-card .sheet-actions { margin-top: 10px; }
-.sheet-actions .btn:disabled { opacity: .6; }
 
 .add-app {
-  display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 14px; padding: 10px;
-  border-radius: 12px; border: 1px dashed var(--line); background: none; color: var(--muted); font-size: 14px;
+  display: block; width: 100%; margin-top: 8px; padding: 10px;
+  border-radius: 10px; border: 1px dashed var(--line); background: none; color: var(--muted); font-size: 14px;
 }
 .add-app:active { background: var(--line); }
-.add-app .icon { width: 16px; height: 16px; }
 .sheet-card {
   width: 100%; max-width: 520px; padding: 20px 16px calc(16px + env(safe-area-inset-bottom));
   background: var(--card); border: 1px solid var(--line); border-bottom: 0; border-radius: 20px 20px 0 0;
@@ -210,15 +205,21 @@ p { margin: 0; }
 }
 .app-icon { width: 48px; height: 48px; border-radius: 11px; flex: none; }
 .app-row {
-  display: grid; grid-template-columns: 30px minmax(0, 2fr) minmax(0, 3fr) 30px; gap: 8px; align-items: center;
+  display: grid; grid-template-columns: 30px minmax(0, 2fr) minmax(0, 3fr) 26px 26px; gap: 6px; align-items: center;
   border-radius: 10px; transition: transform .15s ease;
 }
 .app-row.dragging {
   position: relative; z-index: 2; transition: none; background: var(--card);
   box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
 }
+.app-remove {
+  width: 26px; height: 44px; padding: 0; border: 0; background: none; color: var(--muted);
+  display: grid; place-items: center; -webkit-tap-highlight-color: transparent;
+}
+.app-remove:active { color: var(--bad); }
+.app-remove .icon { width: 18px; height: 18px; }
 .app-grip {
-  width: 30px; height: 44px; padding: 0; border: 0; background: none; color: var(--muted);
+  width: 26px; height: 44px; padding: 0; border: 0; background: none; color: var(--muted);
   display: grid; place-items: center; touch-action: none; cursor: grab; -webkit-tap-highlight-color: transparent;
   -webkit-user-select: none; user-select: none;
 }

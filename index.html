@@ -105,8 +105,9 @@
       <article class="card" id="apps-settings">
         <h2>App buttons</h2>
         <div class="body">
-          <p class="small muted">Each button runs a Shortcut with that name. In the Shortcuts app, make one with a single "Open App" action. You can also paste an app link (e.g. one starting with an app's own scheme). Leave a row blank to hide it, and drag the ≡ handle to change the order. When you save, each label is looked up on the App Store to find the app's icon. Saved only on this phone.</p>
+          <p class="small muted">Each button runs a Shortcut with that name. In the Shortcuts app, make one with a single "Open App" action. You can also paste an app link (e.g. one starting with an app's own scheme). Tap "Add shortcut" for a new row (empty rows aren't saved). Tap × to remove one, and drag the ≡ handle to change the order. When you save, each label is looked up on the App Store to find the app's icon. Saved only on this phone.</p>
           <div id="app-rows"></div>
+          <button type="button" id="add-app-row" class="add-app">＋ Add shortcut</button>
           <button id="save-apps" class="btn" style="margin-top:12px">Save</button>
         </div>
       </article>
@@ -115,19 +116,6 @@
 
   <div id="toast" hidden></div>
   <div id="zoom" hidden><img alt=""><p class="small"></p></div>
-  <div id="add-app" class="sheet" hidden>
-    <form class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="add-app-title" novalidate>
-      <p id="add-app-title" class="sheet-title">Add shortcut</p>
-      <label class="small muted" for="add-app-label">Label</label>
-      <input id="add-app-label" type="text" placeholder="e.g. Spotify" autocomplete="off">
-      <label class="small muted" for="add-app-target">Shortcut name or link</label>
-      <input id="add-app-target" type="text" placeholder="e.g. Open Spotify, or spotify:" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
-      <div class="sheet-actions">
-        <button class="btn btn-quiet" type="button" data-close>Cancel</button>
-        <button id="add-app-ok" class="btn" type="submit">Add</button>
-      </div>
-    </form>
-  </div>
   <div id="sheet" hidden>
     <div class="sheet-card" role="alertdialog" aria-modal="true" aria-labelledby="sheet-text">
       <p id="sheet-text">Are you sure?</p>

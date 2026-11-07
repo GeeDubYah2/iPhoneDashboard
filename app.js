@@ -684,56 +684,21 @@ function appIcon(a, cls) {
   return src ? `<img class="${cls}" src="${esc(src)}" alt="" onerror="this.style.visibility='hidden'">` : "";
 }
 
-const ICON_PLUS = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 
 function loadApps() {
   const apps = (getSettings().apps || []).filter((a) => a.label && a.target && appLink(a.target));
   const grid = apps.length ? `<div class="apps">${apps.map((a) =>
     `<a class="app-btn" href="${esc(appLink(a.target))}">${appIcon(a, "app-icon") || ICON_OPEN}<span>${esc(a.label)}</span></a>`).join("")}</div>` : "";
-  setBody("apps", grid + `<button type="button" class="add-app" id="add-app-open">${ICON_PLUS}Add shortcut</button>`);
+  setBody("apps", grid || `<p class="muted small">Add shortcuts in Settings → App buttons.</p>`);
 }
 
-// "Add shortcut": a small panel from the bottom to add one app button without going to Settings.
-function openAddApp() {
-  if ((getSettings().apps || []).length >= APP_SLOTS) {
-    return toast(`All ${APP_SLOTS} buttons are in use. Remove one in Settings → App buttons`);
-  }
-  const sheet = $("#add-app");
-  sheet.querySelector("form").reset();
-  sheet.hidden = false;
-  requestAnimationFrame(() => sheet.classList.add("open"));
-  setTimeout(() => $("#add-app-label").focus(), 50);
-}
-
-function closeAddApp() {
-  const sheet = $("#add-app");
-  sheet.classList.remove("open");
-  setTimeout(() => { sheet.hidden = true; }, 200);
-}
-
-async function saveNewApp(e) {
-  e.preventDefault();
-  const label = $("#add-app-label").value.trim();
-  const target = $("#add-app-target").value.trim();
-  if (!label || !target) return toast("Add both a label and a Shortcut name or link");
-  if (!appLink(target)) return toast("That link type isn't allowed");
-  const btn = $("#add-app-ok");
-  btn.disabled = true;
-  btn.textContent = "Finding icon…";
-  const found = await findAppIcon(label);
-  btn.disabled = false;
-  btn.textContent = "Add";
-
-  const next = getSettings();
-  const apps = next.apps || [];
-  if (apps.length >= APP_SLOTS) return toast(`All ${APP_SLOTS} buttons are in use`);
-  apps.push({ label, target, ...(found?.icon ? found : {}) });
-  next.apps = apps;
-  saveSettings(next);
-  closeAddApp();
-  renderAppRows();
-  loadApps();
-  toast(found?.icon ? `Added ${label}` : `Added ${label} (no icon found)`);
+// Settings → "Add shortcut": adds a blank row to fill in, then Save.
+function addAppRow() {
+  const rows = appRowsOnScreen();
+  if (rows.length >= APP_SLOTS) return toast(`You can have up to ${APP_SLOTS} shortcuts`);
+  rows.push({});
+  renderAppRows(rows);
+  $(`[data-app-label="${rows.length - 1}"]`).focus();
 }
 
 const ICON_GRIP = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14M5 12h14M5 16h14"/></svg>';
@@ -741,27 +706,43 @@ const ICON_GRIP = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><pat
 // The rows being edited in Settings, including icons found earlier.
 let appDraft = [];
 
+const ICON_X = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>';
+
+// Your shortcuts, plus any blank rows added with "Add shortcut". There's always
+// at least one row; blank rows aren't saved.
 function renderAppRows(rows = getSettings().apps || []) {
-  appDraft = Array.from({ length: APP_SLOTS }, (_, i) => ({ ...(rows[i] || {}) }));
+  appDraft = (rows.length ? rows : [{}]).map((a) => ({ ...a }));
   $("#app-rows").innerHTML = appDraft.map((a, i) => {
     const preview = appIcon(a, "app-preview") || `<span class="app-preview"></span>`;
     return `<div class="app-row" title="${esc(a.storeName || "")}">${preview}` +
       `<input data-app-label="${i}" type="text" placeholder="Label" value="${esc(a.label || "")}" autocomplete="off" aria-label="Button ${i + 1} label">` +
       `<input data-app-target="${i}" type="text" placeholder="Shortcut name or link" value="${esc(a.target || "")}" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" aria-label="Button ${i + 1} shortcut or link">` +
+      `<button type="button" class="app-remove" data-app-remove="${i}" aria-label="Remove ${esc(a.label || "button " + (i + 1))}">${ICON_X}</button>` +
       `<button type="button" class="app-grip" data-app-grip="${i}" aria-label="Reorder button ${i + 1}: drag, or use the up and down arrow keys">${ICON_GRIP}</button>` +
       `</div>`;
   }).join("");
 }
 
+// Current rows as edited on screen (including unsaved typing).
+const appRowsOnScreen = () => appDraft.map((a, k) => ({
+  ...a,
+  label: $(`[data-app-label="${k}"]`).value,
+  target: $(`[data-app-target="${k}"]`).value,
+}));
+
+function removeAppRow(i) {
+  const rows = appRowsOnScreen();
+  const wasBlank = !rows[i].label.trim() && !rows[i].target.trim();
+  rows.splice(i, 1);
+  renderAppRows(rows);
+  if (!wasBlank) toast("Removed. Tap Save to keep the change");
+}
+
 // Moves a row to a new position, keeping anything typed but not yet saved.
 // The new order takes effect when you tap Save.
 function moveAppRow(from, to) {
-  if (to < 0 || to >= APP_SLOTS || to === from) return;
-  const rows = appDraft.map((a, k) => ({
-    ...a,
-    label: $(`[data-app-label="${k}"]`).value,
-    target: $(`[data-app-target="${k}"]`).value,
-  }));
+  if (to < 0 || to >= appDraft.length || to === from) return;
+  const rows = appRowsOnScreen();
   const [row] = rows.splice(from, 1);
   rows.splice(to, 0, row);
   renderAppRows(rows);
@@ -771,6 +752,7 @@ function moveAppRow(from, to) {
 function startAppDrag(e, grip) {
   e.preventDefault();
   const rows = [...document.querySelectorAll("#app-rows .app-row")];
+  if (rows.length < 2) return; // nothing to reorder
   const from = Number(grip.dataset.appGrip);
   const row = rows[from];
   const step = rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top;
@@ -806,7 +788,7 @@ function startAppDrag(e, grip) {
 async function saveAppSettings() {
   const old = getSettings().apps || [];
   const apps = [];
-  for (let i = 0; i < APP_SLOTS; i++) {
+  for (let i = 0; i < appDraft.length; i++) {
     const label = $(`[data-app-label="${i}"]`).value.trim();
     const target = $(`[data-app-target="${i}"]`).value.trim();
     if (!label && !target) continue;
@@ -1008,11 +990,6 @@ function init() {
   $("#save-ring").addEventListener("click", saveRingSettings);
   renderAppRows();
   $("#save-apps").addEventListener("click", saveAppSettings);
-  $("#add-app form").addEventListener("submit", saveNewApp);
-  $("#add-app").addEventListener("click", (e) => {
-    if (e.target.id === "add-app" || e.target.closest("[data-close]")) closeAddApp();
-  });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#add-app").hidden) closeAddApp(); });
   $("#app-rows").addEventListener("pointerdown", (e) => {
     const grip = e.target.closest("[data-app-grip]");
     if (grip && e.isPrimary) startAppDrag(e, grip);
@@ -1024,7 +1001,7 @@ function init() {
     const from = Number(grip.dataset.appGrip);
     const to = from + (e.key === "ArrowUp" ? -1 : 1);
     moveAppRow(from, to);
-    $(`[data-app-grip="${Math.max(0, Math.min(APP_SLOTS - 1, to))}"]`).focus();
+    $(`[data-app-grip="${Math.max(0, Math.min(appDraft.length - 1, to))}"]`)?.focus();
   });
   $("#zoom").addEventListener("click", () => { $("#zoom").hidden = true; });
 
@@ -1035,7 +1012,9 @@ function init() {
     if (pick) return togglePick(pick.dataset.pick);
     const bell = e.target.closest("[data-notify]");
     if (bell) return toggleNotify(bell);
-    if (e.target.closest("#add-app-open")) return openAddApp();
+    if (e.target.closest("#add-app-row")) return addAppRow();
+    const remove = e.target.closest("[data-app-remove]");
+    if (remove) return removeAppRow(Number(remove.dataset.appRemove));
     const train = e.target.closest("[data-train]");
     if (train && train.dataset.train) return toggleTrain(train.dataset.train);
     const delta = e.target.closest("[data-delta]");
