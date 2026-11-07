@@ -14,6 +14,13 @@ Your Ring login, refresh token and access token live only in `.env` and `ring-to
 6. Give it a public HTTPS address with a tunnel (for example Tailscale Funnel or Cloudflare Tunnel) that points to `http://127.0.0.1:8787`.
 7. On the phone, open the dashboard: **Settings → Ring cameras**. Enter the tunnel address and the `DASHBOARD_TOKEN`, then tap Save.
 
+## Start automatically when you log in
+
+`start-helper.ps1` runs the helper, writes its output to `logs\helper.log` (git-ignored), and restarts it 15 seconds after it stops. A Windows scheduled task named **Dashboard Ring helper** runs the script, hidden, 30 seconds after you log in. It needs no administrator rights.
+
+- Start or stop it now: `Start-ScheduledTask "Dashboard Ring helper"` / `Stop-ScheduledTask "Dashboard Ring helper"`
+- Remove it: `Unregister-ScheduledTask "Dashboard Ring helper"`
+
 ## Endpoints
 
 | Endpoint | Returns |

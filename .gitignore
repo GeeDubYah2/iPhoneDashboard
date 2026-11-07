@@ -2,3 +2,4 @@
 helper/.env
 helper/ring-token.json
 helper/node_modules/
+helper/logs/
