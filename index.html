@@ -71,10 +71,25 @@
           <button id="save-trains" class="btn" style="margin-top:12px">Save</button>
         </div>
       </article>
+
+      <article class="card" id="ring-settings">
+        <h2>Ring cameras</h2>
+        <div class="body">
+          <label class="small muted" for="ringUrl">Ring helper address</label>
+          <input id="ringUrl" type="url" placeholder="https://…" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
+
+          <label class="small muted" for="ringToken">Access token</label>
+          <input id="ringToken" type="password" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
+
+          <p class="small muted">The helper runs on your home PC and fetches the snapshots from Ring. Saved only on this phone. Leave the address blank to show demo tiles.</p>
+          <button id="save-ring" class="btn" style="margin-top:12px">Save</button>
+        </div>
+      </article>
     </section>
   </main>
 
   <div id="toast" hidden></div>
+  <div id="zoom" hidden><img alt=""><p class="small"></p></div>
 
   <nav>
     <button data-tab="home" class="active"><span>🏠</span>Home</button>

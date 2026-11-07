@@ -1,0 +1,4 @@
+# Ring helper: secrets and installed packages stay on the home PC
+helper/.env
+helper/ring-token.json
+helper/node_modules/

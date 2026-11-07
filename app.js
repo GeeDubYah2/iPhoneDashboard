@@ -17,7 +17,7 @@ const CONFIG = {
     operator: "", // default train operator code, e.g. "VT"; blank means every operator
     api: "https://huxley2.azurewebsites.net", // unofficial National Rail proxy
   },
-  cameraRefreshSeconds: 15,
+  cameraRefreshSeconds: 60, // Ring battery cameras can't take snapshots much faster than this
 };
 
 /* ------------------------------------------------------------------ */
@@ -223,17 +223,90 @@ function nudgeTarget(delta) {
 
 /* ----------------------------- Camera ----------------------------- */
 
-let camUrl = "";
+// The Ring helper runs at home. Its address and token are set in the
+// Settings tab and stored on this phone only, never in this public file.
+function ringHelper() {
+  const h = getSettings().ring || {};
+  return h.url ? h : null;
+}
+
+async function ringFetch(path) {
+  const h = ringHelper();
+  let res;
+  try {
+    res = await fetch(h.url + path, { headers: h.token ? { Authorization: "Bearer " + h.token } : {} });
+  } catch {
+    throw new Error("can't reach the Ring helper; is the PC on?");
+  }
+  if (res.status === 401) throw new Error("check the access token in Settings");
+  if (!res.ok) throw new Error("Ring helper " + res.status);
+  return res;
+}
+
+let camUrls = [];
+const DEMO_CAMERAS = ["Camera 1", "Camera 2", "Camera 3"];
+
+function setCameraBadge(demo) {
+  const h2 = $("#camera h2");
+  h2.querySelector(".badge")?.remove();
+  if (demo) h2.insertAdjacentHTML("beforeend", '<span class="badge">demo</span>');
+}
+
+function cameraTile(name, src, note) {
+  const img = src
+    ? `<img src="${src}" alt="${esc(name)} snapshot" data-zoom>`
+    : `<div class="cam-empty">${esc(note || "No snapshot")}</div>`;
+  return `<figure class="cam">${img}<figcaption class="small">${esc(name)}</figcaption></figure>`;
+}
 
 async function loadCamera() {
-  if (!LIVE) {
-    return setBody("camera", `<div class="placeholder">Ring snapshot appears here once your API is connected.</div>`);
+  if (!ringHelper()) {
+    setCameraBadge(true);
+    return setBody("camera",
+      `<div class="cams">${DEMO_CAMERAS.map((n) => cameraTile(n, "", "Snapshot")).join("")}</div>` +
+      `<p class="muted small cam-note">Add your Ring helper in Settings to see real snapshots.</p>`);
   }
-  const blob = await (await api("/ring/snapshot")).blob();
-  if (camUrl) URL.revokeObjectURL(camUrl);
-  camUrl = URL.createObjectURL(blob);
+  setCameraBadge(false);
+
+  const cameras = await (await ringFetch("/ring/cameras")).json();
+  if (!cameras.length) return setBody("camera", `<p class="muted">No cameras found on the Ring account.</p>`);
+
+  const shots = await Promise.all(cameras.map(async (c) => {
+    try {
+      const blob = await (await ringFetch(`/ring/cameras/${encodeURIComponent(c.id)}/snapshot`)).blob();
+      return URL.createObjectURL(blob);
+    } catch {
+      return "";
+    }
+  }));
+
+  camUrls.forEach((u) => URL.revokeObjectURL(u));
+  camUrls = shots.filter(Boolean);
+
   const now = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  setBody("camera", `<img src="${camUrl}" alt="Latest camera snapshot"><p class="muted small" style="margin-top:8px">Updated ${now}</p>`);
+  setBody("camera",
+    `<div class="cams">${cameras.map((c, i) => cameraTile(c.name, shots[i], c.offline ? "Offline" : "No snapshot yet")).join("")}</div>` +
+    `<p class="muted small cam-note">Updated ${now} · tap a camera to enlarge</p>`);
+}
+
+function zoomCamera(img) {
+  const box = $("#zoom");
+  box.querySelector("img").src = img.src;
+  box.querySelector("p").textContent = img.alt.replace(/ snapshot$/, "");
+  box.hidden = false;
+}
+
+function saveRingSettings() {
+  const next = getSettings();
+  const url = $("#ringUrl").value.trim().replace(/\/+$/, "");
+  const token = $("#ringToken").value.trim();
+  // https everywhere; plain http only for testing on the same computer
+  if (url && !/^(https:\/\/[^\s/]+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)/i.test(url)) return toast("The address must start with https://");
+  if (url) next.ring = { url, token };
+  else delete next.ring;
+  saveSettings(next);
+  toast(url ? "Saved" : "Ring helper removed");
+  loadAll();
 }
 
 /* ---------------------------- Calendar ---------------------------- */
@@ -383,14 +456,14 @@ function init() {
   greet();
 
   if (!LIVE) {
-    ["camera", "tuya"].forEach((id) => {
+    ["tuya"].forEach((id) => {
       $("#" + id + " h2").insertAdjacentHTML("beforeend", '<span class="badge">demo</span>');
     });
   }
 
   $("#mode").textContent = LIVE
     ? "Connected to " + CONFIG.apiBase.replace(/^https?:\/\//, "")
-    : "Demo mode: no API is set in app.js yet, so the camera and devices show sample data.";
+    : "Demo mode: no API is set in app.js yet, so the devices show sample data. The cameras use the Ring helper set below.";
   const saved = getSettings();
   $("#town").value = saved.town?.name || "";
   $("#stationA").value = saved.stationA || "";
@@ -399,8 +472,14 @@ function init() {
   $("#operator").value = saved.operator !== undefined ? saved.operator : CONFIG.trains.operator;
   $("#save-weather").addEventListener("click", saveWeatherSettings);
   $("#save-trains").addEventListener("click", saveTrainSettings);
+  $("#ringUrl").value = saved.ring?.url || "";
+  $("#ringToken").value = saved.ring?.token || "";
+  $("#save-ring").addEventListener("click", saveRingSettings);
+  $("#zoom").addEventListener("click", () => { $("#zoom").hidden = true; });
 
   document.addEventListener("click", (e) => {
+    const zoom = e.target.closest("[data-zoom]");
+    if (zoom) return zoomCamera(zoom);
     const delta = e.target.closest("[data-delta]");
     if (delta) return nudgeTarget(parseFloat(delta.dataset.delta));
     const sw = e.target.closest("[data-device]");
@@ -413,7 +492,7 @@ function init() {
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { greet(); loadAll(); } });
 
   setInterval(() => {
-    if (LIVE && currentTab === "home" && document.visibilityState === "visible") guard("camera");
+    if (ringHelper() && currentTab === "home" && document.visibilityState === "visible") guard("camera");
   }, CONFIG.cameraRefreshSeconds * 1000);
 
   showTab(["home", "devices", "settings"].includes(store.get("tab")) ? store.get("tab") : "home");

@@ -1,0 +1,16 @@
+{
+  "name": "dashboard-ring-helper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Small home service that fetches Ring camera snapshots for the iPhone dashboard",
+  "type": "module",
+  "main": "server.js",
+  "engines": { "node": ">=20.6" },
+  "scripts": {
+    "start": "node --env-file=.env server.js",
+    "auth": "ring-auth-cli"
+  },
+  "dependencies": {
+    "ring-client-api": "^14.0.0"
+  }
+}

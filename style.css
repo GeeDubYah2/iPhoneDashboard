@@ -80,11 +80,25 @@ p { margin: 0; }
 .round:active { background: var(--line); }
 
 /* Camera */
-#camera img, .placeholder { width: 100%; border-radius: 12px; display: block; }
-.placeholder {
-  aspect-ratio: 16 / 9; display: grid; place-items: center; text-align: center; padding: 16px;
-  background: var(--bg); border: 1px dashed var(--line); color: var(--muted); font-size: 14px;
+.cams { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.cam { margin: 0; min-width: 0; }
+.cam img, .cam-empty {
+  width: 100%; aspect-ratio: 4 / 3; border-radius: 10px; display: block; object-fit: cover; background: var(--bg);
 }
+.cam img { cursor: zoom-in; }
+.cam-empty {
+  display: grid; place-items: center; text-align: center; padding: 6px;
+  border: 1px dashed var(--line); color: var(--muted); font-size: 12px;
+}
+.cam figcaption { margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cam-note { margin: 10px 0 0; }
+
+#zoom {
+  position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 16px; background: rgba(0, 0, 0, .9);
+}
+#zoom[hidden] { display: none; }
+#zoom img { max-width: 100%; max-height: 80vh; border-radius: 12px; }
 
 /* Switch */
 .switch {
