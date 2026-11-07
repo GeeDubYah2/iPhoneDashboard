@@ -233,7 +233,16 @@ input {
   border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text);
 }
 .btn { padding: 12px 20px; border: 0; border-radius: 10px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; }
-#mode { margin-bottom: 14px; }
+.input-row { display: flex; gap: 8px; align-items: center; }
+.input-row input { flex: 1; }
+.bell {
+  width: 46px; height: 46px; flex: none; margin: 6px 0 12px; padding: 0; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--muted); display: grid; place-items: center;
+}
+.bell .icon { width: 22px; height: 22px; }
+.bell[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.bell[aria-pressed="true"] .icon { fill: currentColor; }
+.bell:disabled { opacity: .5; }
 .status-row { display: flex; align-items: center; gap: 10px; }
 .light { width: 14px; height: 14px; border-radius: 50%; flex: none; background: var(--line); }
 .light.green { background: var(--good); box-shadow: 0 0 8px var(--good); }
@@ -254,5 +263,6 @@ nav button.active { color: var(--accent); }
 #toast {
   position: fixed; left: 50%; transform: translateX(-50%);
   bottom: calc(80px + env(safe-area-inset-bottom));
-  background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-size: 14px;
+  background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 16px; font-size: 14px;
+  width: max-content; max-width: calc(100% - 48px); text-align: center; z-index: 30;
 }

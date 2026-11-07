@@ -1,6 +1,6 @@
 // Network-first service worker: updates deploy immediately,
 // and the app shell still opens when you're offline.
-const CACHE = "dashboard-v2";
+const CACHE = "dashboard-v3";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -30,4 +30,27 @@ self.addEventListener("fetch", (e) => {
       })
       .catch(() => caches.match(e.request))
   );
+});
+
+// Train alerts sent by the home helper. iOS shows these on the lock screen
+// and buzzes the phone (needs the dashboard added to the Home Screen).
+self.addEventListener("push", (e) => {
+  let msg = {};
+  try { msg = e.data ? e.data.json() : {}; } catch { msg = { body: e.data?.text() }; }
+  e.waitUntil(self.registration.showNotification(msg.title || "Dashboard", {
+    body: msg.body || "",
+    tag: msg.tag || "dashboard",
+    icon: "icon-180.png",
+    badge: "icon-180.png",
+  }));
+});
+
+// Tapping a notification opens (or focuses) the dashboard.
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    if (wins.length) return wins[0].focus();
+    return self.clients.openWindow("./");
+  })());
 });

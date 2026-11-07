@@ -40,14 +40,6 @@
     </section>
 
     <section id="page-settings" class="page" hidden>
-      <article class="card" id="settings">
-        <h2>Status</h2>
-        <div class="body">
-          <p id="mode" class="muted"></p>
-          <div class="status-row"><span id="helper-light" class="light" aria-hidden="true"></span><span>Ring helper: <span id="helper-state" class="muted">checking…</span></span></div>
-        </div>
-      </article>
-
       <article class="card" id="weather-settings">
         <h2>Weather</h2>
         <div class="body">
@@ -65,10 +57,16 @@
         <h2>Trains</h2>
         <div class="body">
           <label class="small muted" for="stationA">Home station (3-letter code)</label>
-          <input id="stationA" type="text" maxlength="3" placeholder="e.g. LDS" autocapitalize="characters" autocomplete="off">
+          <div class="input-row">
+            <input id="stationA" type="text" maxlength="3" placeholder="e.g. LDS" autocapitalize="characters" autocomplete="off">
+            <button type="button" class="bell" data-notify="home" aria-pressed="false" aria-label="Alert me 10 minutes before reaching my home station"></button>
+          </div>
 
           <label class="small muted" for="stationB">Work station (3-letter code)</label>
-          <input id="stationB" type="text" maxlength="3" placeholder="e.g. KGX" autocapitalize="characters" autocomplete="off">
+          <div class="input-row">
+            <input id="stationB" type="text" maxlength="3" placeholder="e.g. KGX" autocapitalize="characters" autocomplete="off">
+            <button type="button" class="bell" data-notify="work" aria-pressed="false" aria-label="Alert me 10 minutes before reaching my work station"></button>
+          </div>
 
           <label class="small muted" for="switchHour">Switch hour (0 to 23, London time)</label>
           <input id="switchHour" type="number" min="0" max="23" inputmode="numeric" placeholder="12">
@@ -77,7 +75,16 @@
           <input id="operator" type="text" maxlength="2" placeholder="e.g. VT" autocapitalize="characters" autocomplete="off">
 
           <p class="small muted">Before the switch hour the trains card shows Home to Work; from then on, Work to Home. Saved only on this phone.</p>
+          <p class="small muted" style="margin-top:8px">Tap 🔔 beside a station to get a notification 10 minutes before the train you're on reaches it. Mark your train with the circle on the Trains card. Alerts are sent by your home helper and need the dashboard opened from your Home Screen.</p>
           <button id="save-trains" class="btn" style="margin-top:12px">Save</button>
+        </div>
+      </article>
+
+      <article class="card" id="notify-settings">
+        <h2>Notifications</h2>
+        <div class="body">
+          <p class="small muted">Notifications are sent by your home helper, so they arrive even when the dashboard is closed. They need the dashboard opened from your Home Screen. The test arrives 5 seconds after you tap, so you can lock your phone first.</p>
+          <button id="test-push" class="btn" style="margin-top:12px">Test notifications</button>
         </div>
       </article>
 

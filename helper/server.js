@@ -2,9 +2,14 @@
 // Runs on a home PC, signs in to Ring with a refresh token and serves
 // camera snapshots to the dashboard. Settings come from .env (never committed).
 //
-//   GET /health                     -> { ok: true, uptime }
-//   GET /ring/cameras               -> [{ id, name, offline, battery }]
-//   GET /ring/cameras/:id/snapshot  -> image/jpeg
+//   GET  /health                     -> { ok: true, uptime }
+//   GET  /ring/cameras               -> [{ id, name, offline, battery }]
+//   GET  /ring/cameras/:id/snapshot  -> image/jpeg
+//   GET  /push/key                   -> { publicKey }   (for the phone to subscribe)
+//   POST /push/subscribe             <- the phone's push subscription
+//   POST /push/watch                 <- { id, crs, station, std }: alert when it's 10 min away
+//   POST /push/unwatch               stop watching
+//   POST /push/test                  <- { delaySeconds }: send a test notification (optionally later)
 //
 // Every request needs "Authorization: Bearer <DASHBOARD_TOKEN>".
 
@@ -12,6 +17,7 @@ import { createServer } from "node:http";
 import { readFileSync, writeFileSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { RingApi } from "ring-client-api";
+import { addSubscription, notifyAll, phoneCount, publicKey, unwatchTrain, watchTrain } from "./notify.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || "";
@@ -66,19 +72,57 @@ function send(res, status, body, type = "application/json") {
   res.end(type === "application/json" ? JSON.stringify(body) : body);
 }
 
+// Reads a small JSON request body (10 KB max).
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > 10240) { reject(new Error("too large")); req.destroy(); } else chunks.push(c);
+    });
+    req.on("end", () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}")); } catch { reject(new Error("bad json")); } });
+    req.on("error", reject);
+  });
+}
+
 const server = createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", ALLOWED_ORIGIN);
-  res.setHeader("Access-Control-Allow-Headers", "Authorization");
-  res.setHeader("Access-Control-Allow-Methods", "GET");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST");
   res.setHeader("Vary", "Origin");
   if (req.method === "OPTIONS") return send(res, 204, "", "text/plain");
-  if (req.method !== "GET") return send(res, 405, { error: "method not allowed" });
+  if (req.method !== "GET" && req.method !== "POST") return send(res, 405, { error: "method not allowed" });
   if (!authorised(req)) return send(res, 401, { error: "unauthorised" });
 
   const path = new URL(req.url, "http://x").pathname;
+
+  if (req.method === "POST") {
+    try {
+      const body = await readJson(req);
+      if (path === "/push/subscribe") { addSubscription(body); return send(res, 200, { ok: true }); }
+      if (path === "/push/watch") { watchTrain(body); return send(res, 200, { ok: true }); }
+      if (path === "/push/unwatch") { unwatchTrain(); return send(res, 200, { ok: true }); }
+      if (path === "/push/test") {
+        const message = { title: "Dashboard", body: "Test notification: alerts are working.", tag: "test" };
+        const delay = Math.max(0, Math.min(60, Number(body.delaySeconds) || 0));
+        if (delay) { // gives you time to lock the phone first
+          setTimeout(() => notifyAll(message), delay * 1000);
+          return send(res, 200, { ok: true, scheduled: delay, phones: phoneCount() });
+        }
+        const results = await notifyAll(message);
+        return send(res, 200, { ok: results.some((s) => s >= 200 && s < 300), results });
+      }
+      return send(res, 404, { error: "not found" });
+    } catch (e) {
+      return send(res, 400, { error: e.message });
+    }
+  }
+
   try {
     // Quick check for the dashboard's status light; doesn't contact Ring.
     if (path === "/health") return send(res, 200, { ok: true, uptime: Math.round(process.uptime()) });
+    if (path === "/push/key") return send(res, 200, { publicKey: publicKey() });
 
     if (path === "/ring/cameras") {
       const cameras = await getCameras();

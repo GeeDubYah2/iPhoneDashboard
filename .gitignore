@@ -3,3 +3,5 @@ helper/.env
 helper/ring-token.json
 helper/node_modules/
 helper/logs/
+helper/vapid.json
+helper/push-state.json

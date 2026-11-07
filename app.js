@@ -220,6 +220,7 @@ async function loadTrains() {
       platform: s.platform || "",
       arr: stop ? (isTime(stop.et) ? stop.et : stop.st) : "",
       from, to,
+      toName: d.filterLocationName || to,
     };
   });
 
@@ -280,7 +281,107 @@ async function togglePick(id) {
     if (!t) return;
     store.set("myTrain", JSON.stringify({ ...t, pickedAt: Date.now() }));
   }
+  syncTrainAlert();
   guard("trains");
+}
+
+/* ------------------------- Train arrival alerts ------------------------- */
+// The bell beside each station turns on a push notification 10 minutes before
+// the train you're on reaches that station. The home helper watches the train
+// and sends the notification, so it works with the dashboard closed.
+
+const ICON_BELL = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>';
+
+async function helperPost(path, body) {
+  const h = ringHelper();
+  const res = await fetch(h.url + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(h.token ? { Authorization: "Bearer " + h.token } : {}) },
+    body: JSON.stringify(body || {}),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (res.status === 404) throw new Error("the home helper needs updating");
+  if (!res.ok) throw new Error("home helper " + res.status);
+  return res.json();
+}
+
+const notifyOn = (which) => Boolean(getSettings().notify?.[which]);
+
+function updateBells() {
+  document.querySelectorAll("[data-notify]").forEach((b) => {
+    const on = notifyOn(b.dataset.notify);
+    b.innerHTML = ICON_BELL;
+    b.setAttribute("aria-pressed", String(on));
+  });
+}
+
+const b64ToBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "=")), (c) => c.charCodeAt(0));
+
+// Asks permission (first time only) and registers this phone with the helper.
+async function enablePush() {
+  if (!ringHelper()) throw new Error("set up the Ring helper first (Settings → Ring cameras)");
+  if (!("Notification" in window) || !("PushManager" in window) || !navigator.serviceWorker) {
+    throw new Error("open the dashboard from your Home Screen to allow notifications");
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("notifications are turned off for the dashboard in iPhone Settings");
+  const { publicKey } = await (await ringFetch("/push/key", 10000)).json();
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
+  await helperPost("/push/subscribe", sub.toJSON());
+}
+
+async function toggleNotify(btn) {
+  const which = btn.dataset.notify;
+  const next = getSettings();
+  const turningOn = !notifyOn(which);
+  btn.disabled = true;
+  try {
+    if (turningOn) await enablePush();
+    next.notify = { ...(next.notify || {}), [which]: turningOn };
+    saveSettings(next);
+    toast(turningOn ? `Alerts on for trains to your ${which} station` : `Alerts off for your ${which} station`);
+    syncTrainAlert();
+  } catch (e) {
+    toast("Couldn't turn on alerts: " + e.message);
+  } finally {
+    btn.disabled = false;
+    updateBells();
+  }
+}
+
+// Tells the helper which train to watch: the one you're on, if its destination has alerts on.
+async function syncTrainAlert() {
+  const cfg = getSettings();
+  if (!ringHelper() || !(cfg.notify?.home || cfg.notify?.work)) return;
+  const mine = getMyTrain();
+  const which = mine && (mine.to === cfg.stationA ? "home" : mine.to === cfg.stationB ? "work" : "");
+  try {
+    if (which && cfg.notify?.[which]) {
+      await helperPost("/push/watch", { id: mine.id, crs: mine.to, station: mine.toName || mine.to, std: mine.std });
+    } else {
+      await helperPost("/push/unwatch");
+    }
+  } catch (e) {
+    toast("Train alert not set: " + e.message);
+  }
+}
+
+// Settings → Notifications: registers this phone if needed, then asks the
+// helper to send a test in 5 seconds (time to lock the phone).
+async function sendTestPush() {
+  const btn = $("#test-push");
+  btn.disabled = true;
+  try {
+    await enablePush();
+    await helperPost("/push/test", { delaySeconds: 5 });
+    toast("Test notification coming in 5 seconds");
+  } catch (e) {
+    toast("Couldn't send: " + e.message);
+  } finally {
+    setTimeout(() => { btn.disabled = false; }, 5000);
+  }
 }
 
 // A small panel that slides up from the bottom; resolves true for the main button.
@@ -374,9 +475,9 @@ async function loadTrainDetail(id) {
     }
   }
 
-  let where;
+  let where = ""; // nothing to say for a train that hasn't set off yet
   if (d.isCancelled) where = `<span class="bad">This train is cancelled</span>${d.cancelReason ? ` · ${esc(d.cancelReason)}` : ""}`;
-  else if (last < 0) where = `Not started yet · leaves ${esc(stops[0].locationName)} at ${esc(stops[0].st)}`;
+  else if (last < 0) where = "";
   else if (last === stops.length - 1) where = `Arrived at ${esc(stops[last].locationName)}`;
   else {
     const s = stops[last];
@@ -410,7 +511,7 @@ async function loadTrainDetail(id) {
       `<span class="stop">${esc(s.locationName)}${plat}</span><span class="small">${note}</span></li>${here}`;
   }).join("");
 
-  box.innerHTML = `<p class="small train-where">${where}</p><ul class="stops">${items}</ul>`;
+  box.innerHTML = (where ? `<p class="small train-where">${where}</p>` : "") + `<ul class="stops">${items}</ul>`;
 }
 
 /* --------------------------- Thermostat --------------------------- */
@@ -485,17 +586,31 @@ function cameraTile(name, src, note) {
   return `<figure class="cam">${img}<figcaption class="small">${esc(name)}</figcaption></figure>`;
 }
 
+// The helper's traffic light, shown at the bottom of the Camera card.
+function helperStatus(connected) {
+  const now = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return `<div class="status-row cam-note small"><span class="light ${connected ? "green" : "red"}" aria-hidden="true"></span>` +
+    `<span>${connected ? `Connected · updated ${now}` : "Not connected"}</span></div>`;
+}
+
 async function loadCamera() {
   if (!ringHelper()) {
     setCameraBadge(true);
     return setBody("camera",
       `<div class="cams">${DEMO_CAMERAS.map((n) => cameraTile(n, "", "Snapshot")).join("")}</div>` +
-      `<p class="muted small cam-note">Add your Ring helper in Settings to see real snapshots.</p>`);
+      helperStatus(false));
   }
   setCameraBadge(false);
 
-  const cameras = await (await ringFetch("/ring/cameras")).json();
-  if (!cameras.length) return setBody("camera", `<p class="muted">No cameras found on the Ring account.</p>`);
+  let cameras;
+  try {
+    cameras = await (await ringFetch("/ring/cameras")).json();
+  } catch {
+    // Keep the last snapshots on screen; just turn the light red.
+    const tiles = $("#camera .cams");
+    return setBody("camera", (tiles ? tiles.outerHTML : "") + helperStatus(false));
+  }
+  if (!cameras.length) return setBody("camera", `<p class="muted">No cameras found on the Ring account.</p>${helperStatus(true)}`);
 
   const shots = await Promise.all(cameras.map(async (c) => {
     try {
@@ -509,29 +624,9 @@ async function loadCamera() {
   camUrls.forEach((u) => URL.revokeObjectURL(u));
   camUrls = shots.filter(Boolean);
 
-  const now = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   setBody("camera",
     `<div class="cams">${cameras.map((c, i) => cameraTile(c.name, shots[i], c.offline ? "Offline" : "No snapshot yet")).join("")}</div>` +
-    `<p class="muted small cam-note">Updated ${now} · tap a camera to enlarge</p>`);
-}
-
-// Traffic light in Settings → Status: green when the helper answers and accepts the token.
-let statusCheck = 0;
-async function loadStatus() {
-  const mine = ++statusCheck; // only the latest check may update the light
-  const set = (colour, text) => {
-    if (mine !== statusCheck) return;
-    $("#helper-light").className = "light " + colour;
-    $("#helper-state").textContent = text;
-  };
-  if (!ringHelper()) return set("red", "not set up yet (add it below)");
-  set("", "checking…");
-  try {
-    await ringFetch("/health", 8000);
-    set("green", "running and connected");
-  } catch (e) {
-    set("red", e.message);
-  }
+    helperStatus(true));
 }
 
 function zoomCamera(img) {
@@ -764,7 +859,7 @@ let currentTab = "home";
 
 const LOADERS = {
   weather: loadWeather, trains: loadTrains, thermostat: loadThermostat,
-  camera: loadCamera, calendar: loadCalendar, tuya: loadDevices, status: loadStatus, apps: loadApps,
+  camera: loadCamera, calendar: loadCalendar, tuya: loadDevices, apps: loadApps,
 };
 
 async function guard(id) {
@@ -773,8 +868,7 @@ async function guard(id) {
 }
 
 function loadAll() {
-  const ids = currentTab === "devices" ? ["tuya"] : currentTab === "home" ? ["weather", "trains", "camera", "apps"] /* add "thermostat" and "calendar" back here, plus their cards in index.html */
-    : currentTab === "settings" ? ["status"] : [];
+  const ids = currentTab === "devices" ? ["tuya"] : currentTab === "home" ? ["weather", "trains", "camera", "apps"] /* add "thermostat" and "calendar" back here, plus their cards in index.html */ : [];
   ids.forEach(guard);
 }
 
@@ -853,9 +947,6 @@ function init() {
     });
   }
 
-  $("#mode").textContent = LIVE
-    ? "Connected to " + CONFIG.apiBase.replace(/^https?:\/\//, "")
-    : "Demo mode: no API is set in app.js yet, so the devices show sample data. The cameras use the Ring helper set below.";
   const saved = getSettings();
   $("#town").value = saved.town?.name || "";
   $("#workTown").value = saved.work?.name || "";
@@ -867,6 +958,8 @@ function init() {
   $("#operator").value = saved.operator !== undefined ? saved.operator : CONFIG.trains.operator;
   $("#save-weather").addEventListener("click", saveWeatherSettings);
   $("#save-trains").addEventListener("click", saveTrainSettings);
+  $("#test-push").addEventListener("click", sendTestPush);
+  updateBells();
   $("#ringUrl").value = saved.ring?.url || "";
   $("#ringToken").value = saved.ring?.token || "";
   $("#save-ring").addEventListener("click", saveRingSettings);
@@ -892,6 +985,8 @@ function init() {
     if (zoom) return zoomCamera(zoom);
     const pick = e.target.closest("[data-pick]");
     if (pick) return togglePick(pick.dataset.pick);
+    const bell = e.target.closest("[data-notify]");
+    if (bell) return toggleNotify(bell);
     const train = e.target.closest("[data-train]");
     if (train && train.dataset.train) return toggleTrain(train.dataset.train);
     const delta = e.target.closest("[data-delta]");

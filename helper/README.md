@@ -21,6 +21,12 @@ Your Ring login, refresh token and access token live only in `.env` and `ring-to
 - Start or stop it now: `Start-ScheduledTask "Dashboard Ring helper"` / `Stop-ScheduledTask "Dashboard Ring helper"`
 - Remove it: `Unregister-ScheduledTask "Dashboard Ring helper"`
 
+## Train alerts (push notifications)
+
+The helper also sends the phone a notification 10 minutes before the train you're on reaches your station. On the phone: open the dashboard from the Home Screen, tap 🔔 beside a station in **Settings → Trains**, and mark your train with the circle on the Trains card. **Settings → Notifications → Test notifications** sends a test 5 seconds later.
+
+Push uses Web Push with VAPID, built on Node's own crypto (`push.js`, no extra packages). The helper's VAPID keys are in `vapid.json`, and phone subscriptions and the watched train are in `push-state.json`. Both are git-ignored. Delete `vapid.json` to make new keys, then turn the bells off and on again on the phone. Set `ALERT_MINUTES` in `.env` to change the 10 minutes.
+
 ## Endpoints
 
 | Endpoint | Returns |
@@ -28,5 +34,10 @@ Your Ring login, refresh token and access token live only in `.env` and `ring-to
 | `GET /health` | `{ "ok": true, "uptime": 120 }` (for the status light; doesn't contact Ring) |
 | `GET /ring/cameras` | `[{ "id": "…", "name": "…", "offline": false, "battery": 80 }]` |
 | `GET /ring/cameras/:id/snapshot` | a JPEG image |
+| `GET /push/key` | `{ "publicKey": "…" }` (VAPID key for the phone to subscribe) |
+| `POST /push/subscribe` | the phone's push subscription |
+| `POST /push/watch` | `{ "id", "crs", "station", "std" }`: alert 10 minutes before the train reaches `crs` |
+| `POST /push/unwatch` | stop watching |
+| `POST /push/test` | `{ "delaySeconds": 5 }`: send a test notification |
 
 Every request needs `Authorization: Bearer <DASHBOARD_TOKEN>`. Snapshots are cached for 30 seconds. Battery cameras may not have a fresh snapshot every time.
