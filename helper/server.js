@@ -10,6 +10,11 @@
 //   POST /push/watch                 <- { id, crs, station, std }: alert when it's 10 min away
 //   POST /push/unwatch               stop watching
 //   POST /push/test                  <- { delaySeconds }: send a test notification (optionally later)
+//   GET  /sonos/rooms                -> [{ id, name, group, volume, muted }]
+//   POST /sonos/volume               <- { id, volume }   (0 to 100)
+//   POST /sonos/mute                 <- { id, muted }
+//   POST /sonos/join                 <- { id, to }: room id plays along with room to's group
+//   POST /sonos/leave                <- { id }: room id leaves its group
 //
 // Every request needs "Authorization: Bearer <DASHBOARD_TOKEN>".
 
@@ -18,6 +23,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { RingApi } from "ring-client-api";
 import { addSubscription, notifyAll, phoneCount, publicKey, unwatchTrain, watchTrain } from "./notify.js";
+import { sonosJoin, sonosLeave, sonosRooms, sonosSetMute, sonosSetVolume } from "./sonos.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || "";
@@ -113,9 +119,14 @@ const server = createServer(async (req, res) => {
         const results = await notifyAll(message);
         return send(res, 200, { ok: results.some((s) => s >= 200 && s < 300), results });
       }
+      if (path === "/sonos/volume") return send(res, 200, await sonosSetVolume(body.id, body.volume));
+      if (path === "/sonos/mute") return send(res, 200, await sonosSetMute(body.id, body.muted));
+      if (path === "/sonos/join") return send(res, 200, await sonosJoin(body.id, body.to));
+      if (path === "/sonos/leave") return send(res, 200, await sonosLeave(body.id));
       return send(res, 404, { error: "not found" });
     } catch (e) {
-      return send(res, 400, { error: e.message });
+      if (path.startsWith("/sonos/")) console.error(new Date().toISOString(), path, e.message);
+      return send(res, e.status || (path.startsWith("/sonos/") ? 503 : 400), { error: e.message });
     }
   }
 
@@ -123,6 +134,13 @@ const server = createServer(async (req, res) => {
     // Quick check for the dashboard's status light; doesn't contact Ring.
     if (path === "/health") return send(res, 200, { ok: true, uptime: Math.round(process.uptime()) });
     if (path === "/push/key") return send(res, 200, { publicKey: publicKey() });
+
+    if (path === "/sonos/rooms") {
+      try { return send(res, 200, await sonosRooms()); } catch (e) {
+        console.error(new Date().toISOString(), path, e.message);
+        return send(res, 503, { error: e.message });
+      }
+    }
 
     if (path === "/ring/cameras") {
       const cameras = await getCameras();

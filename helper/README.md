@@ -27,6 +27,12 @@ The helper also sends the phone a notification 10 minutes before the train you'r
 
 Push uses Web Push with VAPID, built on Node's own crypto (`push.js`, no extra packages). The helper's VAPID keys are in `vapid.json`, and phone subscriptions and the watched train are in `push-state.json`. Both are git-ignored. Delete `vapid.json` to make new keys, then turn the bells off and on again on the phone. Set `ALERT_MINUTES` in `.env` to change the 10 minutes.
 
+## Sonos volume
+
+The Sonos card on the dashboard's Home tab uses the helper too. Sonos speakers answer simple requests on port 1400 of your home network with no login, so the helper (`sonos.js`, no extra packages) finds them with a network search and sets each room's volume and mute. It can also group rooms so one plays along with another (like "Group" in the Sonos app) and ungroup them again. Nothing needs setting up: it uses the same helper address and token as the Ring cameras.
+
+If no speakers are found (a firewall can block the search), set `SONOS_HOSTS` in `.env` to one or more speaker IP addresses, separated by commas. The Sonos app shows them under **Settings → System → About My System**.
+
 ## Endpoints
 
 | Endpoint | Returns |
@@ -39,5 +45,10 @@ Push uses Web Push with VAPID, built on Node's own crypto (`push.js`, no extra p
 | `POST /push/watch` | `{ "id", "crs", "station", "std" }`: alert 10 minutes before the train reaches `crs` |
 | `POST /push/unwatch` | stop watching |
 | `POST /push/test` | `{ "delaySeconds": 5 }`: send a test notification |
+| `GET /sonos/rooms` | `[{ "id": "RINCON_…", "name": "Kitchen", "group": "RINCON_…", "volume": 30, "muted": false }]` (`group` is the room leading its group) |
+| `POST /sonos/volume` | `{ "id", "volume" }`: set a room's volume (0 to 100) |
+| `POST /sonos/mute` | `{ "id", "muted" }`: mute or unmute a room |
+| `POST /sonos/join` | `{ "id", "to" }`: room `id` plays the same music as room `to` |
+| `POST /sonos/leave` | `{ "id" }`: room `id` leaves its group |
 
 Every request needs `Authorization: Bearer <DASHBOARD_TOKEN>`. Snapshots are cached for 30 seconds. Battery cameras may not have a fresh snapshot every time.

@@ -878,13 +878,144 @@ async function toggleDevice(id) {
   }
 }
 
+/* ------------------------------ Sonos ------------------------------ */
+// Volume for each Sonos room. The home helper talks to the speakers on the
+// home network; without a helper the card shows demo rooms.
+
+const DEMO_ROOMS = [
+  { id: "demo-lr", name: "Living Room", group: "demo-lr", volume: 25, muted: false },
+  { id: "demo-k", name: "Kitchen", group: "demo-k", volume: 40, muted: false },
+];
+const ICON_SPEAKER = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="wave" d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="cross" d="M16 9.5l5 5M21 9.5l-5 5"/></svg>';
+
+let sonosRooms = [];
+let sonosTouched = 0; // last time a slider was moved; don't redraw under your finger
+const sonosTimers = {};
+
+function setSonosBadge(demo) {
+  const h2 = $("#sonos h2");
+  h2.querySelector(".badge")?.remove();
+  if (demo) h2.insertAdjacentHTML("beforeend", '<span class="badge">demo</span>');
+}
+
+// The room a room plays along with (its own ID when it's on its own).
+const sonosLead = (r) => (sonosRooms.some((x) => x.id === r.group) ? r.group : r.id);
+// True when the room is playing together with at least one other room.
+const sonosGrouped = (r) => sonosRooms.some((x) => x.id !== r.id && sonosLead(x) === sonosLead(r));
+// A room you've ticked that isn't grouped yet; the next room you tick joins it.
+let sonosPicked = "";
+
+function sonosRow(r) {
+  const ticked = sonosGrouped(r) || sonosPicked === r.id;
+  return `<div class="row sonos-room${r.muted ? " muted-room" : ""}" data-room="${esc(r.id)}">` +
+    `<button class="mute" type="button" data-mute="${esc(r.id)}" aria-pressed="${r.muted}" aria-label="Mute ${esc(r.name)}">${ICON_SPEAKER}</button>` +
+    `<div class="grow"><div class="sonos-top"><span>${esc(r.name)}</span><span class="small muted" data-vol-label>${r.muted ? "Muted" : r.volume}</span></div>` +
+    `<input type="range" min="0" max="100" step="1" value="${r.volume}" style="--val:${r.volume}%" data-vol="${esc(r.id)}" aria-label="${esc(r.name)} volume"></div>` +
+    (sonosRooms.length > 1
+      ? `<input type="checkbox" class="tick" data-group="${esc(r.id)}"${ticked ? " checked" : ""} aria-label="Play ${esc(r.name)} with the other ticked rooms">`
+      : "") +
+    `</div>`;
+}
+
+function renderSonos() {
+  if (!sonosRooms.length) return setBody("sonos", `<p class="muted">No Sonos speakers found.</p>`);
+  if (sonosPicked && !sonosRooms.some((r) => r.id === sonosPicked && !sonosGrouped(r))) sonosPicked = "";
+  setBody("sonos", sonosRooms.map(sonosRow).join("") +
+    (sonosRooms.length > 1
+      ? `<p class="small muted sonos-hint">Tick rooms to play them together. The first room you tick is the music they all play.</p>`
+      : ""));
+}
+
+// After grouping, ask the speakers again once they've settled.
+let sonosRecheck;
+function recheckSonos() {
+  clearTimeout(sonosRecheck);
+  sonosRecheck = setTimeout(() => guard("sonos"), 1500);
+}
+
+async function sonosTick(id, ticked) {
+  const room = sonosRooms.find((r) => r.id === id);
+  if (!room) return;
+  const before = sonosRooms.map((r) => r.group);
+  const undo = (msg) => { sonosRooms.forEach((r, i) => { r.group = before[i]; }); renderSonos(); toast(msg); };
+
+  if (ticked) {
+    // Join a group that's already playing together, or else the room ticked first.
+    const target = sonosRooms.find((r) => r.id !== id && sonosGrouped(r)) || sonosRooms.find((r) => r.id === sonosPicked && r.id !== id);
+    if (!target) { sonosPicked = id; return renderSonos(); }
+    const lead = sonosLead(target);
+    sonosPicked = "";
+    room.group = lead;
+    renderSonos();
+    if (!ringHelper()) return;
+    try { await helperPost("/sonos/join", { id, to: lead }); } catch (e) { undo("Couldn't group the rooms: " + e.message); }
+    return recheckSonos();
+  }
+
+  if (sonosPicked === id) { sonosPicked = ""; return renderSonos(); }
+  if (!sonosGrouped(room)) return renderSonos();
+  // Leave the group. If this room was leading it, the others carry on together.
+  const rest = sonosRooms.filter((r) => r.id !== id && sonosLead(r) === sonosLead(room));
+  if (sonosLead(room) === id) rest.forEach((r) => { r.group = rest[0].id; });
+  room.group = id;
+  renderSonos();
+  if (!ringHelper()) return;
+  try { await helperPost("/sonos/leave", { id }); } catch (e) { undo("Couldn't ungroup: " + e.message); }
+  recheckSonos();
+}
+
+async function loadSonos() {
+  if (!ringHelper()) {
+    setSonosBadge(true);
+    if (!sonosRooms.length || !sonosRooms[0].id.startsWith("demo")) sonosRooms = structuredClone(DEMO_ROOMS);
+    return renderSonos();
+  }
+  setSonosBadge(false);
+  const rooms = await (await ringFetch("/sonos/rooms", 20000)).json();
+  if (Date.now() - sonosTouched < 3000) return; // you're moving a slider; keep yours
+  sonosRooms = rooms;
+  renderSonos();
+}
+
+// While dragging: update the number now, send the volume at most every 300 ms.
+function sonosSlide(input, final) {
+  const room = sonosRooms.find((r) => r.id === input.dataset.vol);
+  if (!room) return;
+  sonosTouched = Date.now();
+  room.volume = Number(input.value);
+  input.style.setProperty("--val", room.volume + "%");
+  const label = input.closest(".sonos-room").querySelector("[data-vol-label]");
+  if (!room.muted) label.textContent = room.volume;
+  if (!ringHelper()) return;
+  clearTimeout(sonosTimers[room.id]);
+  const send = () => helperPost("/sonos/volume", { id: room.id, volume: room.volume })
+    .catch((e) => toast("Couldn't set the volume: " + e.message));
+  if (final) send();
+  else sonosTimers[room.id] = setTimeout(send, 300);
+}
+
+async function toggleMute(id) {
+  const room = sonosRooms.find((r) => r.id === id);
+  if (!room) return;
+  room.muted = !room.muted;
+  renderSonos();
+  if (!ringHelper()) return;
+  try {
+    await helperPost("/sonos/mute", { id, muted: room.muted });
+  } catch (e) {
+    room.muted = !room.muted;
+    renderSonos();
+    toast("Couldn't change mute: " + e.message);
+  }
+}
+
 /* ----------------------- Tabs, refresh, setup ---------------------- */
 
 let currentTab = "home";
 
 const LOADERS = {
   weather: loadWeather, trains: loadTrains, thermostat: loadThermostat,
-  camera: loadCamera, calendar: loadCalendar, tuya: loadDevices, apps: loadApps,
+  camera: loadCamera, calendar: loadCalendar, tuya: loadDevices, apps: loadApps, sonos: loadSonos,
 };
 
 async function guard(id) {
@@ -893,7 +1024,7 @@ async function guard(id) {
 }
 
 function loadAll() {
-  const ids = currentTab === "devices" ? ["tuya"] : currentTab === "home" ? ["weather", "trains", "camera", "apps"] /* add "thermostat" and "calendar" back here, plus their cards in index.html */ : [];
+  const ids = currentTab === "devices" ? ["sonos", "tuya"] : currentTab === "home" ? ["weather", "trains", "camera", "apps"] /* add "thermostat" and "calendar" back here, plus their cards in index.html */ : [];
   ids.forEach(guard);
 }
 
@@ -1004,6 +1135,11 @@ function init() {
     $(`[data-app-grip="${Math.max(0, Math.min(appDraft.length - 1, to))}"]`)?.focus();
   });
   $("#zoom").addEventListener("click", () => { $("#zoom").hidden = true; });
+  $("#sonos").addEventListener("input", (e) => { if (e.target.dataset.vol) sonosSlide(e.target, false); });
+  $("#sonos").addEventListener("change", (e) => {
+    if (e.target.dataset.vol) sonosSlide(e.target, true);
+    if (e.target.dataset.group) sonosTick(e.target.dataset.group, e.target.checked);
+  });
 
   document.addEventListener("click", (e) => {
     const zoom = e.target.closest("[data-zoom]");
@@ -1019,6 +1155,8 @@ function init() {
     if (train && train.dataset.train) return toggleTrain(train.dataset.train);
     const delta = e.target.closest("[data-delta]");
     if (delta) return nudgeTarget(parseFloat(delta.dataset.delta));
+    const mute = e.target.closest("[data-mute]");
+    if (mute) return toggleMute(mute.dataset.mute);
     const sw = e.target.closest("[data-device]");
     if (sw) return toggleDevice(sw.dataset.device);
     const tab = e.target.closest("nav [data-tab]");
