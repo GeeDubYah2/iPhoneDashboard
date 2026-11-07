@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1116">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Dashboard">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="style.css">
+  <title>Dashboard</title>
+</head>
+<body>
+  <header>
+    <div>
+      <h1 id="greeting">Hello</h1>
+      <p id="today" class="muted"></p>
+    </div>
+    <button id="refresh" class="icon-btn" aria-label="Refresh">↻</button>
+  </header>
+
+  <main>
+    <section id="page-home" class="page">
+      <article class="card" id="weather"><h2>Weather</h2><div class="body muted">Loading…</div></article>
+      <article class="card" id="trains"><h2>Trains</h2><div class="body muted">Loading…</div></article>
+      <article class="card" id="thermostat"><h2>Heating</h2><div class="body muted">Loading…</div></article>
+      <article class="card" id="camera"><h2>Camera</h2><div class="body muted">Loading…</div></article>
+      <article class="card" id="calendar"><h2>Coming up</h2><div class="body muted">Loading…</div></article>
+    </section>
+
+    <section id="page-devices" class="page" hidden>
+      <article class="card" id="tuya"><h2>Smart devices</h2><div class="body muted">Loading…</div></article>
+    </section>
+
+    <section id="page-settings" class="page" hidden>
+      <article class="card" id="settings">
+        <h2>Settings</h2>
+        <div class="body">
+          <p id="mode" class="muted"></p>
+          <label class="small muted" for="token">Access token (stored only on this phone)</label>
+          <input id="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button id="save-token" class="btn">Save</button>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <div id="toast" hidden></div>
+
+  <nav>
+    <button data-tab="home" class="active"><span>🏠</span>Home</button>
+    <button data-tab="devices"><span>💡</span>Devices</button>
+    <button data-tab="settings"><span>⚙️</span>Settings</button>
+  </nav>
+
+  <script src="app.js"></script>
+</body>
+</html>
