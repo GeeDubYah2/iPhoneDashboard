@@ -17,7 +17,7 @@ GitHub Pages on a free account needs a public repo, so never put passwords, toke
 | --- | --- |
 | Weather | Live. Uses Open-Meteo (no key needed). Uses the phone's location; your fallback town is set in the Settings tab. |
 | Trains | Live, via an unofficial community National Rail proxy (Huxley2). Your two stations, switch hour and operator are set in the Settings tab, so none of it is stored in the repo. |
-| Heating (Hive), Camera (Ring), Calendar, Smart devices (Tuya) | Demo data until you connect an API (below). |
+| Camera (Ring), Smart devices (Tuya) | Demo data until you connect an API (below). Heating and calendar are switched off for now. |
 
 ## Connecting the rest
 
