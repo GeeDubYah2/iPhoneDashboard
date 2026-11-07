@@ -407,8 +407,7 @@ function loadApps() {
     `<a class="app-btn" href="${esc(appLink(a.target))}">${appIcon(a, "app-icon") || ICON_OPEN}<span>${esc(a.label)}</span></a>`).join("")}</div>`);
 }
 
-const ICON_UP = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>';
-const ICON_DOWN = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+const ICON_GRIP = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14M5 12h14M5 16h14"/></svg>';
 
 // The rows being edited in Settings, including icons found earlier.
 let appDraft = [];
@@ -420,26 +419,59 @@ function renderAppRows(rows = getSettings().apps || []) {
     return `<div class="app-row" title="${esc(a.storeName || "")}">${preview}` +
       `<input data-app-label="${i}" type="text" placeholder="Label" value="${esc(a.label || "")}" autocomplete="off" aria-label="Button ${i + 1} label">` +
       `<input data-app-target="${i}" type="text" placeholder="Shortcut name or link" value="${esc(a.target || "")}" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" aria-label="Button ${i + 1} shortcut or link">` +
-      `<div class="app-move">` +
-      `<button type="button" data-app-move="${i}:-1" aria-label="Move button ${i + 1} up"${i === 0 ? " disabled" : ""}>${ICON_UP}</button>` +
-      `<button type="button" data-app-move="${i}:1" aria-label="Move button ${i + 1} down"${i === APP_SLOTS - 1 ? " disabled" : ""}>${ICON_DOWN}</button>` +
-      `</div></div>`;
+      `<button type="button" class="app-grip" data-app-grip="${i}" aria-label="Reorder button ${i + 1}: drag, or use the up and down arrow keys">${ICON_GRIP}</button>` +
+      `</div>`;
   }).join("");
 }
 
-// Swaps a row with its neighbour, keeping anything typed but not yet saved.
+// Moves a row to a new position, keeping anything typed but not yet saved.
 // The new order takes effect when you tap Save.
-function moveAppRow(i, dir) {
-  const j = i + dir;
-  if (j < 0 || j >= APP_SLOTS) return;
+function moveAppRow(from, to) {
+  if (to < 0 || to >= APP_SLOTS || to === from) return;
   const rows = appDraft.map((a, k) => ({
     ...a,
     label: $(`[data-app-label="${k}"]`).value,
     target: $(`[data-app-target="${k}"]`).value,
   }));
-  [rows[i], rows[j]] = [rows[j], rows[i]];
+  const [row] = rows.splice(from, 1);
+  rows.splice(to, 0, row);
   renderAppRows(rows);
-  $(`[data-app-move="${j}:${dir}"]`)?.focus();
+}
+
+// Drag a row by its handle. Pointer events cover touch (iPhone) and mouse.
+function startAppDrag(e, grip) {
+  e.preventDefault();
+  const rows = [...document.querySelectorAll("#app-rows .app-row")];
+  const from = Number(grip.dataset.appGrip);
+  const row = rows[from];
+  const step = rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top;
+  const startY = e.clientY;
+  let to = from;
+
+  try { grip.setPointerCapture(e.pointerId); } catch { /* not needed for mouse */ }
+  row.classList.add("dragging");
+
+  const move = (ev) => {
+    const dy = Math.max(-from * step, Math.min((rows.length - 1 - from) * step, ev.clientY - startY));
+    row.style.transform = `translateY(${dy}px)`;
+    to = from + Math.round(dy / step);
+    rows.forEach((r, k) => {
+      if (k === from) return;
+      const shift = from < to && k > from && k <= to ? -step : from > to && k >= to && k < from ? step : 0;
+      r.style.transform = shift ? `translateY(${shift}px)` : "";
+    });
+  };
+  const end = () => {
+    grip.removeEventListener("pointermove", move);
+    grip.removeEventListener("pointerup", end);
+    grip.removeEventListener("pointercancel", end);
+    rows.forEach((r) => { r.style.transform = ""; });
+    row.classList.remove("dragging");
+    moveAppRow(from, to);
+  };
+  grip.addEventListener("pointermove", move);
+  grip.addEventListener("pointerup", end);
+  grip.addEventListener("pointercancel", end);
 }
 
 async function saveAppSettings() {
@@ -649,16 +681,24 @@ function init() {
   $("#save-ring").addEventListener("click", saveRingSettings);
   renderAppRows();
   $("#save-apps").addEventListener("click", saveAppSettings);
+  $("#app-rows").addEventListener("pointerdown", (e) => {
+    const grip = e.target.closest("[data-app-grip]");
+    if (grip && e.isPrimary) startAppDrag(e, grip);
+  });
+  $("#app-rows").addEventListener("keydown", (e) => {
+    const grip = e.target.closest("[data-app-grip]");
+    if (!grip || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+    e.preventDefault();
+    const from = Number(grip.dataset.appGrip);
+    const to = from + (e.key === "ArrowUp" ? -1 : 1);
+    moveAppRow(from, to);
+    $(`[data-app-grip="${Math.max(0, Math.min(APP_SLOTS - 1, to))}"]`).focus();
+  });
   $("#zoom").addEventListener("click", () => { $("#zoom").hidden = true; });
 
   document.addEventListener("click", (e) => {
     const zoom = e.target.closest("[data-zoom]");
     if (zoom) return zoomCamera(zoom);
-    const move = e.target.closest("[data-app-move]");
-    if (move) {
-      const [i, dir] = move.dataset.appMove.split(":").map(Number);
-      return moveAppRow(i, dir);
-    }
     const delta = e.target.closest("[data-delta]");
     if (delta) return nudgeTarget(parseFloat(delta.dataset.delta));
     const sw = e.target.closest("[data-device]");

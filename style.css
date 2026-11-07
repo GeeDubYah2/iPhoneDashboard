@@ -126,14 +126,21 @@ p { margin: 0; }
   border: 1px solid var(--line); border-radius: 11px; /* stands in for a missing app icon */
 }
 .app-icon { width: 48px; height: 48px; border-radius: 11px; flex: none; }
-.app-row { display: grid; grid-template-columns: 30px minmax(0, 2fr) minmax(0, 3fr) 30px; gap: 8px; align-items: center; }
-.app-move { display: flex; flex-direction: column; gap: 2px; }
-.app-move button {
-  width: 30px; height: 22px; padding: 0; border-radius: 6px; border: 1px solid var(--line);
-  background: var(--bg); color: var(--text); display: grid; place-items: center;
+.app-row {
+  display: grid; grid-template-columns: 30px minmax(0, 2fr) minmax(0, 3fr) 30px; gap: 8px; align-items: center;
+  border-radius: 10px; transition: transform .15s ease;
 }
-.app-move button:disabled { opacity: .3; }
-.app-move .icon { width: 14px; height: 14px; stroke-width: 2.2; }
+.app-row.dragging {
+  position: relative; z-index: 2; transition: none; background: var(--card);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+}
+.app-grip {
+  width: 30px; height: 44px; padding: 0; border: 0; background: none; color: var(--muted);
+  display: grid; place-items: center; touch-action: none; cursor: grab; -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none; user-select: none;
+}
+.app-row.dragging .app-grip { color: var(--text); cursor: grabbing; }
+.app-grip .icon { width: 20px; height: 20px; }
 .app-preview { width: 30px; height: 30px; border-radius: 7px; background: var(--bg); border: 1px dashed var(--line); }
 img.app-preview { border: 0; }
 .app-row input { margin: 6px 0; }
