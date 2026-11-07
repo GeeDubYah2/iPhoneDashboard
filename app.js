@@ -9,15 +9,11 @@ const CONFIG = {
   apiBase: "", // e.g. "https://dashboard-api.example.com" (HTTPS, no trailing slash)
   weather: {
     useDeviceLocation: true, // ask the phone for its location; falls back to the place below
-    name: "London", lat: 51.5072, lon: -0.1276,
+    name: "London", lat: 51.5072, lon: -0.1276, // generic default; set your own fallback town in Settings
   },
   trains: {
-    // Which route to show depends on the time of day in London (3-letter station codes).
-    morning: { from: "LDS", to: "KGX" },   // before switchHour: Leeds to London Kings Cross
-    afternoon: { from: "KGX", to: "LDS" }, // from switchHour: London Kings Cross to Leeds
-    switchHour: 12,
-    rows: 4,
-    operatorCode: "", // e.g. "VT" for one operator; "" shows every operator
+    // Your stations, switch hour and operator are set in the Settings tab (stored on your phone only).
+    rows: 2, // how many upcoming trains to show
     api: "https://huxley2.azurewebsites.net", // unofficial National Rail proxy
   },
   cameraRefreshSeconds: 15,
@@ -61,6 +57,13 @@ async function api(path, opts = {}) {
 }
 const apiJson = async (path, opts) => (await api(path, opts)).json();
 
+/* ------------- Personal settings (stored on this phone only) ------------- */
+
+function getSettings() {
+  try { return JSON.parse(store.get("settings")) || {}; } catch { return {}; }
+}
+function saveSettings(s) { store.set("settings", JSON.stringify(s)); }
+
 /* ---------------------------- Weather ----------------------------- */
 
 const WMO = {
@@ -90,12 +93,36 @@ function cachedPosition() {
   try { return JSON.parse(store.get("loc")) || null; } catch { return null; }
 }
 
+async function placeName(lat, lon) {
+  const key = lat.toFixed(2) + "," + lon.toFixed(2); // roughly 1 km, so we don't look up on every refresh
+  try {
+    const cached = JSON.parse(store.get("place"));
+    if (cached?.key === key && cached.name) return cached.name;
+  } catch { /* nothing cached yet */ }
+  try {
+    const res = await fetch(
+      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`,
+      { signal: AbortSignal.timeout(4000) }
+    );
+    const g = await res.json();
+    const name = g.locality || g.city || g.principalSubdivision;
+    if (name) {
+      store.set("place", JSON.stringify({ key, name }));
+      return name;
+    }
+  } catch { /* offline or blocked */ }
+  return "Your location";
+}
+
 async function loadWeather() {
   let { lat, lon, name } = CONFIG.weather;
+  const town = getSettings().town;
+  if (town) ({ lat, lon, name } = town); // your own fallback town, if you've set one
   const pos = (await getPosition()) || cachedPosition();
+  let namePromise = Promise.resolve(name);
   if (pos) {
     ({ lat, lon } = pos);
-    name = "Your location";
+    namePromise = placeName(lat, lon); // looked up alongside the forecast
     store.set("loc", JSON.stringify(pos));
   }
   const url = "https://api.open-meteo.com/v1/forecast" +
@@ -110,6 +137,7 @@ async function loadWeather() {
   const [icon, label] = wx(d.current.weather_code);
   const todayLabel = wx(d.daily.weather_code[0])[1];
   const rain = d.daily.precipitation_probability_max?.[0];
+  name = await namePromise;
 
   setBody("weather",
     `<div class="wx-now"><span class="temp">${Math.round(d.current.temperature_2m)}°</span>` +
@@ -127,13 +155,20 @@ function londonHour() {
 
 async function loadTrains() {
   const t = CONFIG.trains;
-  const { from, to } = londonHour() < t.switchHour ? t.morning : t.afternoon;
-  const fetchRows = t.operatorCode ? t.rows * 3 : t.rows; // fetch extra, then filter by operator
-  const res = await fetch(`${t.api}/departures/${from}/to/${to}/${fetchRows}`);
+  const cfg = getSettings();
+  if (!cfg.stationA || !cfg.stationB) {
+    return setBody("trains", `<p class="muted">Set your two stations in Settings to see trains.</p>`);
+  }
+  const switchHour = Number.isInteger(cfg.switchHour) ? cfg.switchHour : 12;
+  // Before the switch hour (London time): A to B. From then on: B to A.
+  const [from, to] = londonHour() < switchHour ? [cfg.stationA, cfg.stationB] : [cfg.stationB, cfg.stationA];
+  const operator = cfg.operator || "";
+  const fetchRows = operator ? t.rows * 3 : t.rows; // fetch extra, then filter by operator
+  const res = await fetch(`${t.api}/departures/${from}/to/${to}/${fetchRows}?expand=true`); // expand adds calling points
   if (!res.ok) throw new Error("departure board " + res.status);
   const d = await res.json();
   const list = (d.trainServices || [])
-    .filter((s) => !t.operatorCode || !s.operatorCode || s.operatorCode === t.operatorCode)
+    .filter((x) => !operator || !x.operatorCode || x.operatorCode === operator)
     .slice(0, t.rows);
   const station = esc(d.locationName || from);
   const route = `${station} to ${esc(d.filterLocationName || to)}`;
@@ -144,8 +179,12 @@ async function loadTrains() {
     const cls = s.isCancelled ? "bad" : status === "On time" ? "good" : "warn";
     const dest = esc(s.destination?.[0]?.locationName || "");
     const plat = s.platform ? ` <span class="muted small">pl. ${esc(s.platform)}</span>` : "";
+    // Expected arrival at your destination: the live estimate if there is one, otherwise the timetable.
+    const stop = (s.subsequentCallingPoints || []).flatMap((g) => g.callingPoint || []).find((p) => p.crs === to);
+    const arr = stop ? (/^\d\d:\d\d$/.test(stop.et) ? stop.et : stop.st) : "";
+    const arrives = arr ? `<div class="muted small">Arrives ${esc(arr)}</div>` : "";
     return `<div class="row"><span class="time">${esc(s.std)}</span>` +
-      `<span class="grow">${dest}${plat}</span><span class="${cls}">${esc(status)}</span></div>`;
+      `<span class="grow">${dest}${plat}${arrives}</span><span class="${cls}">${esc(status)}</span></div>`;
   }).join("");
   setBody("trains", `<p class="muted small">${route}</p>${items}`);
 }
@@ -290,6 +329,48 @@ function greet() {
   $("#today").textContent = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
 }
 
+async function savePlaces() {
+  const old = getSettings();
+  const next = { ...old };
+  const val = (id) => $("#" + id).value.trim().toUpperCase();
+
+  for (const id of ["stationA", "stationB"]) {
+    const v = val(id);
+    if (v && !/^[A-Z]{3}$/.test(v)) return toast("Station codes are 3 letters");
+    next[id] = v;
+  }
+
+  const op = val("operator");
+  if (op && !/^[A-Z0-9]{2}$/.test(op)) return toast("Operator codes are 2 characters");
+  next.operator = op;
+
+  const hourText = $("#switchHour").value.trim();
+  const hour = Number(hourText);
+  if (hourText && !(Number.isInteger(hour) && hour >= 0 && hour <= 23)) return toast("Hour must be 0 to 23");
+  next.switchHour = hourText ? hour : undefined;
+
+  let placeLabel = "";
+  const townText = $("#town").value.trim();
+  if (!townText) {
+    delete next.town;
+  } else if (townText !== old.town?.name) {
+    try {
+      const res = await fetch("https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&name=" + encodeURIComponent(townText));
+      const hit = (await res.json()).results?.[0];
+      if (!hit) return toast("Couldn't find that town");
+      next.town = { name: hit.name, lat: hit.latitude, lon: hit.longitude };
+      placeLabel = [hit.name, hit.admin1, hit.country].filter(Boolean).join(", ");
+      $("#town").value = hit.name;
+    } catch {
+      return toast("Couldn't look up that town");
+    }
+  }
+
+  saveSettings(next);
+  toast(placeLabel ? "Saved. Fallback town: " + placeLabel : "Saved");
+  loadAll();
+}
+
 function init() {
   greet();
 
@@ -303,6 +384,14 @@ function init() {
     ? "Connected to " + CONFIG.apiBase.replace(/^https?:\/\//, "")
     : "Demo mode: no API is set in app.js yet, so heating, camera, calendar and devices show sample data.";
   $("#token").value = store.get("token");
+
+  const saved = getSettings();
+  $("#town").value = saved.town?.name || "";
+  $("#stationA").value = saved.stationA || "";
+  $("#stationB").value = saved.stationB || "";
+  $("#switchHour").value = Number.isInteger(saved.switchHour) ? saved.switchHour : "";
+  $("#operator").value = saved.operator || "";
+  $("#save-places").addEventListener("click", savePlaces);
   $("#save-token").addEventListener("click", () => {
     store.set("token", $("#token").value.trim());
     toast("Saved");
