@@ -14,6 +14,7 @@ const CONFIG = {
   trains: {
     // Your stations, switch hour and operator are set in the Settings tab (stored on your phone only).
     rows: 2, // how many upcoming trains to show
+    operator: "", // default train operator code, e.g. "VT"; blank means every operator
     api: "https://huxley2.azurewebsites.net", // unofficial National Rail proxy
   },
   cameraRefreshSeconds: 15,
@@ -48,7 +49,7 @@ async function api(path, opts = {}) {
     ...opts,
     headers: {
       "Content-Type": "application/json",
-      Authorization: "Bearer " + store.get("token"),
+      ...(store.get("token") ? { Authorization: "Bearer " + store.get("token") } : {}),
       ...(opts.headers || {}),
     },
   });
@@ -162,7 +163,7 @@ async function loadTrains() {
   const switchHour = Number.isInteger(cfg.switchHour) ? cfg.switchHour : 12;
   // Before the switch hour (London time): A to B. From then on: B to A.
   const [from, to] = londonHour() < switchHour ? [cfg.stationA, cfg.stationB] : [cfg.stationB, cfg.stationA];
-  const operator = cfg.operator || "";
+  const operator = cfg.operator !== undefined ? cfg.operator : t.operator;
   const fetchRows = operator ? t.rows * 3 : t.rows; // fetch extra, then filter by operator
   const res = await fetch(`${t.api}/departures/${from}/to/${to}/${fetchRows}?expand=true`); // expand adds calling points
   if (!res.ok) throw new Error("departure board " + res.status);
@@ -311,7 +312,7 @@ async function guard(id) {
 }
 
 function loadAll() {
-  const ids = currentTab === "devices" ? ["tuya"] : currentTab === "home" ? ["weather", "trains", "thermostat", "camera", "calendar"] : [];
+  const ids = currentTab === "devices" ? ["tuya"] : currentTab === "home" ? ["weather", "trains", "camera"] /* add "thermostat" and "calendar" back here, plus their cards in index.html */ : [];
   ids.forEach(guard);
 }
 
@@ -329,9 +330,33 @@ function greet() {
   $("#today").textContent = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
 }
 
-async function savePlaces() {
-  const old = getSettings();
-  const next = { ...old };
+async function saveWeatherSettings() {
+  const next = getSettings();
+  const townText = $("#town").value.trim();
+  let label = "";
+
+  if (!townText) {
+    delete next.town;
+  } else if (townText !== next.town?.name) {
+    try {
+      const res = await fetch("https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&name=" + encodeURIComponent(townText));
+      const hit = (await res.json()).results?.[0];
+      if (!hit) return toast("Couldn't find that town");
+      next.town = { name: hit.name, lat: hit.latitude, lon: hit.longitude };
+      label = [hit.name, hit.admin1, hit.country].filter(Boolean).join(", ");
+      $("#town").value = hit.name;
+    } catch {
+      return toast("Couldn't look up that town");
+    }
+  }
+
+  saveSettings(next);
+  toast(label ? "Saved. Default location: " + label : "Saved");
+  loadAll();
+}
+
+function saveTrainSettings() {
+  const next = getSettings();
   const val = (id) => $("#" + id).value.trim().toUpperCase();
 
   for (const id of ["stationA", "stationB"]) {
@@ -342,32 +367,15 @@ async function savePlaces() {
 
   const op = val("operator");
   if (op && !/^[A-Z0-9]{2}$/.test(op)) return toast("Operator codes are 2 characters");
-  next.operator = op;
+  next.operator = op; // blank means every operator
 
   const hourText = $("#switchHour").value.trim();
   const hour = Number(hourText);
   if (hourText && !(Number.isInteger(hour) && hour >= 0 && hour <= 23)) return toast("Hour must be 0 to 23");
   next.switchHour = hourText ? hour : undefined;
 
-  let placeLabel = "";
-  const townText = $("#town").value.trim();
-  if (!townText) {
-    delete next.town;
-  } else if (townText !== old.town?.name) {
-    try {
-      const res = await fetch("https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&name=" + encodeURIComponent(townText));
-      const hit = (await res.json()).results?.[0];
-      if (!hit) return toast("Couldn't find that town");
-      next.town = { name: hit.name, lat: hit.latitude, lon: hit.longitude };
-      placeLabel = [hit.name, hit.admin1, hit.country].filter(Boolean).join(", ");
-      $("#town").value = hit.name;
-    } catch {
-      return toast("Couldn't look up that town");
-    }
-  }
-
   saveSettings(next);
-  toast(placeLabel ? "Saved. Fallback town: " + placeLabel : "Saved");
+  toast("Saved");
   loadAll();
 }
 
@@ -375,28 +383,22 @@ function init() {
   greet();
 
   if (!LIVE) {
-    ["thermostat", "camera", "calendar", "tuya"].forEach((id) => {
+    ["camera", "tuya"].forEach((id) => {
       $("#" + id + " h2").insertAdjacentHTML("beforeend", '<span class="badge">demo</span>');
     });
   }
 
   $("#mode").textContent = LIVE
     ? "Connected to " + CONFIG.apiBase.replace(/^https?:\/\//, "")
-    : "Demo mode: no API is set in app.js yet, so heating, camera, calendar and devices show sample data.";
-  $("#token").value = store.get("token");
-
+    : "Demo mode: no API is set in app.js yet, so the camera and devices show sample data.";
   const saved = getSettings();
   $("#town").value = saved.town?.name || "";
   $("#stationA").value = saved.stationA || "";
   $("#stationB").value = saved.stationB || "";
   $("#switchHour").value = Number.isInteger(saved.switchHour) ? saved.switchHour : "";
-  $("#operator").value = saved.operator || "";
-  $("#save-places").addEventListener("click", savePlaces);
-  $("#save-token").addEventListener("click", () => {
-    store.set("token", $("#token").value.trim());
-    toast("Saved");
-    loadAll();
-  });
+  $("#operator").value = saved.operator !== undefined ? saved.operator : CONFIG.trains.operator;
+  $("#save-weather").addEventListener("click", saveWeatherSettings);
+  $("#save-trains").addEventListener("click", saveTrainSettings);
 
   document.addEventListener("click", (e) => {
     const delta = e.target.closest("[data-delta]");
