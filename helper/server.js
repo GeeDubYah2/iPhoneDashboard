@@ -10,14 +10,15 @@
 //   POST /push/watch                 <- { id, crs, station, std }: alert when it's 10 min away
 //   POST /push/unwatch               stop watching
 //   POST /push/test                  <- { delaySeconds }: send a test notification (optionally later)
-//   GET  /sonos/rooms                -> [{ id, name, group, fadeLeft, volume, muted, playing }]
+//   GET  /sonos/rooms                -> [{ id, name, group, fadeLeft, volume, muted, tv, playing, controls }]
 //   GET  /sonos/art/:id              -> artwork for what room id's group is playing
 //   POST /sonos/volume               <- { id, volume }   (0 to 100)
 //   POST /sonos/mute                 <- { id, muted }
 //   POST /sonos/join                 <- { id, to }: room id plays along with room to's group
 //   POST /sonos/leave                <- { id }: room id leaves its group
-//   POST /sonos/fade                 fade out every playing room over 90 s, then pause
+//   POST /sonos/fade                 fade out every playing room over 30 s, then pause
 //   POST /sonos/fade/stop            stop fading (the volume stays where it is)
+//   POST /sonos/control              <- { id, action }: play, pause, next, previous, shuffle, repeat or tv
 //
 // Every request needs "Authorization: Bearer <DASHBOARD_TOKEN>".
 
@@ -26,7 +27,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { RingApi } from "ring-client-api";
 import { addSubscription, notifyAll, phoneCount, publicKey, unwatchTrain, watchTrain } from "./notify.js";
-import { sonosArt, sonosFade, sonosJoin, sonosLeave, sonosRooms, sonosSetMute, sonosSetVolume, sonosStopFade } from "./sonos.js";
+import { sonosArt, sonosControl, sonosFade, sonosJoin, sonosLeave, sonosRooms, sonosSetMute, sonosSetVolume, sonosStopFade } from "./sonos.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || "";
@@ -128,6 +129,7 @@ const server = createServer(async (req, res) => {
       if (path === "/sonos/leave") return send(res, 200, await sonosLeave(body.id));
       if (path === "/sonos/fade") return send(res, 200, await sonosFade());
       if (path === "/sonos/fade/stop") return send(res, 200, sonosStopFade());
+      if (path === "/sonos/control") return send(res, 200, await sonosControl(body.id, body.action));
       return send(res, 404, { error: "not found" });
     } catch (e) {
       if (path.startsWith("/sonos/")) console.error(new Date().toISOString(), path, e.message);

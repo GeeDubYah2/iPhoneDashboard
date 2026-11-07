@@ -180,12 +180,52 @@ async function nowPlaying(host) {
   };
 }
 
+// Shuffle and repeat, as Sonos names their combinations.
+const PLAY_MODES = {
+  NORMAL: [false, "off"], REPEAT_ALL: [false, "all"], REPEAT_ONE: [false, "one"],
+  SHUFFLE_NOREPEAT: [true, "off"], SHUFFLE: [true, "all"], SHUFFLE_REPEAT_ONE: [true, "one"],
+};
+const playModeFor = (shuffle, repeat) =>
+  Object.keys(PLAY_MODES).find((k) => PLAY_MODES[k][0] === shuffle && PLAY_MODES[k][1] === repeat);
+
+// What the buttons can do for a group, from the room leading it:
+// { state, shuffle, repeat, canPlay, canSkip, canShuffle, tv }.
+async function groupControls(host) {
+  const [t, s, m] = await Promise.all(["GetTransportInfo", "GetTransportSettings", "GetMediaInfo"].map((a) => transport(host, a)));
+  const raw = t.match(/<CurrentTransportState>([^<]*)/)?.[1] || "";
+  const [shuffle, repeat] = PLAY_MODES[s.match(/<PlayMode>([^<]*)/)?.[1]] || [false, "off"];
+  const uri = xmlUnescape(m.match(/<CurrentURI>([^<]*)/)?.[1] || "");
+  const queue = uri.startsWith("x-rincon-queue:"); // the Sonos queue (music chosen in the Sonos app)
+  const connect = uri.startsWith("x-sonos-vli:"); // played from another app, e.g. Spotify Connect or AirPlay
+  return {
+    state: /^(PLAYING|TRANSITIONING)$/.test(raw) ? "playing" : raw === "PAUSED_PLAYBACK" ? "paused" : "stopped",
+    shuffle, repeat,
+    canPlay: Boolean(uri),
+    canSkip: queue || connect,
+    canShuffle: queue,
+    tv: uri.startsWith("x-sonos-htastream:"),
+  };
+}
+
+// Rooms with a TV input (soundbars), by room ID. Read once from each speaker's description.
+const hasTv = new Map();
+async function checkTv(room) {
+  if (!hasTv.has(room.id)) {
+    try {
+      const res = await fetch(`http://${room.host}:1400/xml/device_description.xml`, { signal: AbortSignal.timeout(5000) });
+      hasTv.set(room.id, (await res.text()).includes("urn:schemas-upnp-org:service:HTControl:1"));
+    } catch { return false; }
+  }
+  return hasTv.get(room.id);
+}
+
 // Artwork addresses the speakers reported, by the room leading the group.
 // The art endpoint only ever fetches one of these, never an address from the request.
 const artByLead = new Map();
 
-// [{ id, name, group, fadeLeft, volume, muted, playing }]; a speaker that doesn't answer is left out.
-// "playing" is { state, title, artist, album, artKey } for the room's group, or null.
+// [{ id, name, group, fadeLeft, volume, muted, tv, playing, controls }]; a speaker that doesn't answer is left out.
+// "tv" is true for a room with a TV input. "playing" is { state, title, artist, album, artKey } for the
+// room's group, or null. "controls" is what the play buttons can do for the room's group (see groupControls).
 export async function sonosRooms() {
   let rooms = await getRoomList();
   let read = await Promise.all(rooms.map((r) => readRoom(r).catch(() => null)));
@@ -197,12 +237,20 @@ export async function sonosRooms() {
   const leads = [...new Set(rooms.map(leadOf))];
   const now = new Map(await Promise.all(leads.map(async (lead) =>
     [lead, await nowPlaying(rooms.find((r) => r.id === lead).host).catch(() => null)])));
+  const controls = new Map(await Promise.all(leads.map(async (lead) =>
+    [lead, await groupControls(rooms.find((r) => r.id === lead).host).catch(() => null)])));
+  const tv = new Map(await Promise.all(rooms.map(async (r) => [r.id, await checkTv(r)])));
   artByLead.clear();
   for (const [lead, np] of now) if (np?.art) artByLead.set(lead, np.art);
   return read.filter(Boolean).map((r) => {
     const np = now.get(leadOf(r));
     const { art, ...rest } = np || {};
-    return { ...r, playing: np ? { ...rest, artKey: art ? createHash("sha1").update(art).digest("hex").slice(0, 12) : null } : null };
+    return {
+      ...r,
+      tv: tv.get(r.id) || false,
+      playing: np ? { ...rest, artKey: art ? createHash("sha1").update(art).digest("hex").slice(0, 12) : null } : null,
+      controls: controls.get(leadOf(r)) || null,
+    };
   });
 }
 
@@ -258,12 +306,12 @@ export async function sonosLeave(id) {
 
 // ---------------------------- Fade out ----------------------------
 // Turns every playing room down by a tenth of its starting volume every
-// 10 seconds. At zero it pauses the music and puts the volumes back, so the
+// 3 seconds (30 seconds in all). At zero it pauses the music and puts the volumes back, so the
 // next time you press play it isn't silent. Runs here, so it carries on when
 // the phone is locked.
 
 const FADE_STEPS = 10;
-const FADE_STEP_SECONDS = 10;
+const FADE_STEP_SECONDS = 3; // 10 steps: silent after 30 seconds
 let fade = null; // { timer, step, rooms: [{ id, host, lead, start }] }
 
 const isPlaying = async (host) =>
@@ -318,7 +366,6 @@ export async function sonosFade() {
     rooms: fading.map((r, i) => ({ id: r.id, host: r.host, lead: lead(r), start: read[i].volume })),
   };
   fade.timer = setInterval(() => fadeStep().catch((e) => console.error(new Date().toISOString(), "sonos fade", e.message)), FADE_STEP_SECONDS * 1000);
-  await fadeStep(); // the first step straight away
   return { fading: true, seconds: (FADE_STEPS - fade.step) * FADE_STEP_SECONDS, rooms: fade.rooms.map((r) => r.id) };
 }
 
@@ -327,4 +374,39 @@ export function sonosStopFade() {
   if (fade) clearInterval(fade.timer);
   fade = null;
   return { fading: false };
+}
+
+// ------------------------- Play buttons and TV -------------------------
+// action: play, pause, next, previous, shuffle (on/off), repeat (off -> all -> one -> off)
+// or tv (switch a room with a TV input to the TV sound). Playback actions go to
+// the room leading the group, so they work from any room in it.
+export async function sonosControl(id, action) {
+  await getRoomList(); // the latest grouping
+  const room = await roomById(id);
+  const lead = lastRooms.find((r) => r.id === room.group) || room;
+  const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
+  switch (action) {
+    case "play": await transport(lead.host, "Play", "<Speed>1</Speed>"); break;
+    case "pause": await transport(lead.host, "Pause"); break;
+    case "next": await transport(lead.host, "Next"); break;
+    case "previous": await transport(lead.host, "Previous"); break;
+    case "shuffle":
+    case "repeat": {
+      const s = await transport(lead.host, "GetTransportSettings");
+      let [shuffle, repeat] = PLAY_MODES[s.match(/<PlayMode>([^<]*)/)?.[1]] || [false, "off"];
+      if (action === "shuffle") shuffle = !shuffle;
+      else repeat = { off: "all", all: "one", one: "off" }[repeat];
+      await transport(lead.host, "SetPlayMode", `<NewPlayMode>${playModeFor(shuffle, repeat)}</NewPlayMode>`);
+      break;
+    }
+    case "tv": {
+      if (!(await checkTv(room))) throw bad("this room has no TV input");
+      await transport(room.host, "SetAVTransportURI",
+        `<CurrentURI>x-sonos-htastream:${room.id}:spdif</CurrentURI><CurrentURIMetaData></CurrentURIMetaData>`);
+      await transport(room.host, "Play", "<Speed>1</Speed>").catch(() => {}); // the TV may already be playing
+      break;
+    }
+    default: throw bad("unknown action");
+  }
+  return { ok: true, id: room.id, action };
 }

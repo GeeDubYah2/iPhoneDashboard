@@ -883,10 +883,22 @@ async function toggleDevice(id) {
 // home network; without a helper the card shows demo rooms.
 
 const DEMO_ROOMS = [
-  { id: "demo-lr", name: "Living Room", group: "demo-lr", volume: 25, muted: false,
-    playing: { state: "playing", title: "Song title", artist: "Artist name", album: "Album", artKey: null } },
-  { id: "demo-k", name: "Kitchen", group: "demo-k", volume: 40, muted: false, playing: null },
+  { id: "demo-lr", name: "Living Room", group: "demo-lr", volume: 25, muted: false, tv: true,
+    playing: { state: "playing", title: "Song title", artist: "Artist name", album: "Album", artKey: null },
+    controls: { state: "playing", shuffle: false, repeat: "off", canPlay: true, canSkip: true, canShuffle: true, tv: false } },
+  { id: "demo-k", name: "Kitchen", group: "demo-k", volume: 40, muted: false, tv: false, playing: null,
+    controls: { state: "stopped", shuffle: false, repeat: "off", canPlay: false, canSkip: false, canShuffle: false, tv: false } },
 ];
+const svg = (paths) => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+const SONOS_ICONS = {
+  shuffle: svg('<path d="M4 7h3c3.5 0 5.5 10 9 10h4M4 17h3c1.5 0 2.7-1.2 3.6-3M13.4 10c.9-1.8 2.1-3 3.6-3h3M17 4l3 3-3 3M17 14l3 3-3 3"/>'),
+  previous: svg('<path d="M6 5v14"/><path class="solid" d="M19 5.5 9 12l10 6.5z"/>'),
+  play: svg('<path class="solid" d="M7.5 4.5v15L20 12z"/>'),
+  pause: svg('<rect class="solid" x="6" y="4.5" width="4" height="15" rx="1"/><rect class="solid" x="14" y="4.5" width="4" height="15" rx="1"/>'),
+  next: svg('<path d="M18 5v14"/><path class="solid" d="M5 5.5 15 12 5 18.5z"/>'),
+  repeat: svg('<path d="M4 11V9a3 3 0 0 1 3-3h12M16 3l3 3-3 3M20 13v2a3 3 0 0 1-3 3H5M8 21l-3-3 3-3"/>'),
+  tv: svg('<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/>'),
+};
 const ICON_NOTE = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>';
 const sonosArtUrls = new Map(); // artKey -> picture shown on this phone
 const ICON_SPEAKER = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="wave" d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="cross" d="M16 9.5l5 5M21 9.5l-5 5"/></svg>';
@@ -942,12 +954,13 @@ function nowPlayingHtml() {
 function renderSonos() {
   if (!sonosRooms.length) return setBody("sonos", `<p class="muted">No Sonos speakers found.</p>`);
   if (sonosPicked && !sonosRooms.some((r) => r.id === sonosPicked && !sonosGrouped(r))) sonosPicked = "";
-  setBody("sonos", nowPlayingHtml() + sonosRooms.map(sonosRow).join("") +
+  updateTvButton();
+  setBody("sonos", nowPlayingHtml() + sonosRooms.map(sonosRow).join("") + transportHtml() +
     `<button class="btn sonos-fade" type="button" data-fade aria-pressed="false">Fade out</button>`);
   updateFadeButton();
 }
 
-/* Fade out: the helper turns playing rooms down by a tenth every 10 seconds,
+/* Fade out: the helper turns playing rooms down by a tenth every 3 seconds (30 s in all),
    then pauses. It runs on the helper, so it carries on with the phone locked. */
 let fadeEndsAt = 0; // when the fade finishes, by this phone's clock
 let fadeTicker;
@@ -964,7 +977,7 @@ function showFadeTime() {
   return left;
 }
 
-// Counts down on the button each second; reads the rooms again every 10 s
+// Counts down on the button each second; reads the rooms again every 5 s
 // so the sliders follow the fade.
 function updateFadeButton() {
   clearInterval(fadeTicker);
@@ -972,7 +985,7 @@ function updateFadeButton() {
   fadeTicker = setInterval(() => {
     const left = showFadeTime();
     if (!left) { clearInterval(fadeTicker); recheckSonos(); }
-    else if (left % 10 === 5 && ringHelper() && currentTab === "devices" && document.visibilityState === "visible") guard("sonos");
+    else if (left % 5 === 0 && ringHelper() && currentTab === "devices" && document.visibilityState === "visible") guard("sonos");
   }, 1000);
 }
 
@@ -986,9 +999,8 @@ function runDemoFade() {
     if (step >= 10) { clearInterval(demoFade); demoFade = null; sonosRooms.forEach((r, i) => { r.volume = start[i]; }); fadeEndsAt = 0; toast("Faded out and paused"); }
     renderSonos();
   };
-  fadeEndsAt = Date.now() + 90000;
-  demoFade = setInterval(tick, 10000);
-  tick();
+  fadeEndsAt = Date.now() + 30000;
+  demoFade = setInterval(tick, 3000);
 }
 
 async function toggleFade() {
@@ -1012,6 +1024,71 @@ async function toggleFade() {
   } finally {
     btn.disabled = false;
   }
+}
+
+// The group the play buttons control: one that's playing, else paused, else one with something to play.
+function sonosTarget() {
+  const has = (test) => sonosRooms.find((r) => r.controls && test(r.controls));
+  const r = has((c) => c.state === "playing") || has((c) => c.state === "paused") || has((c) => c.canPlay) || sonosRooms[0];
+  return r && (sonosRooms.find((x) => x.id === sonosLead(r)) || r);
+}
+
+function transportHtml() {
+  const lead = sonosTarget();
+  const c = lead?.controls || {};
+  const playing = c.state === "playing";
+  const btn = (action, label, icon, opts = {}) =>
+    `<button class="tp${opts.main ? " tp-main" : ""}" type="button" data-ctl="${action}" aria-label="${label}"` +
+    `${opts.pressed !== undefined ? ` aria-pressed="${opts.pressed}"` : ""}${opts.off ? " disabled" : ""}>${icon}${opts.extra || ""}</button>`;
+  return `<div class="transport">` +
+    btn("shuffle", "Shuffle", SONOS_ICONS.shuffle, { pressed: Boolean(c.shuffle), off: !c.canShuffle }) +
+    btn("previous", "Previous track", SONOS_ICONS.previous, { off: !c.canSkip }) +
+    btn(playing ? "pause" : "play", playing ? "Pause" : "Play", playing ? SONOS_ICONS.pause : SONOS_ICONS.play, { main: true, off: !c.canPlay }) +
+    btn("next", "Next track", SONOS_ICONS.next, { off: !c.canSkip }) +
+    btn("repeat", c.repeat === "one" ? "Repeat one" : c.repeat === "all" ? "Repeat all" : "Repeat",
+      SONOS_ICONS.repeat, { pressed: c.repeat !== "off" && Boolean(c.repeat), off: !c.canShuffle, extra: c.repeat === "one" ? '<span class="tp-one">1</span>' : "" }) +
+    `</div>`;
+}
+
+// The TV button (top right) switches the first room with a TV input to the TV.
+const tvRoom = () => sonosRooms.find((r) => r.tv);
+function updateTvButton() {
+  const btn = $("#sonos-tv");
+  const room = tvRoom();
+  btn.hidden = !room;
+  if (!room) return;
+  if (!btn.innerHTML) btn.innerHTML = SONOS_ICONS.tv;
+  btn.setAttribute("aria-pressed", String(Boolean(room.controls?.tv)));
+  btn.setAttribute("aria-label", `Switch ${room.name} to the TV`);
+}
+
+// Updates every room in the group straight away, then asks the helper.
+async function sonosControl(action) {
+  const lead = action === "tv" ? tvRoom() : sonosTarget();
+  if (!lead) return;
+  const group = action === "tv" ? [lead] : sonosRooms.filter((r) => sonosLead(r) === lead.id);
+  const before = group.map((r) => structuredClone({ controls: r.controls, playing: r.playing }));
+  for (const r of group) {
+    const c = r.controls || (r.controls = {});
+    if (action === "play") { c.state = "playing"; if (r.playing) r.playing.state = "playing"; }
+    if (action === "pause") { c.state = "paused"; if (r.playing) r.playing.state = "paused"; }
+    if (action === "shuffle") c.shuffle = !c.shuffle;
+    if (action === "repeat") c.repeat = { off: "all", all: "one", one: "off" }[c.repeat || "off"];
+    if (action === "tv") {
+      Object.assign(c, { tv: true, state: "playing", canPlay: true, canSkip: false, canShuffle: false });
+      r.playing = { state: "playing", title: "TV", artist: "", album: "", artKey: null };
+    }
+  }
+  renderSonos();
+  if (!ringHelper()) return;
+  try {
+    await helperPost("/sonos/control", { id: lead.id, action });
+  } catch (e) {
+    group.forEach((r, i) => Object.assign(r, before[i]));
+    renderSonos();
+    toast("Sonos didn't respond: " + e.message);
+  }
+  recheckSonos();
 }
 
 // After grouping, ask the speakers again once they've settled.
@@ -1263,6 +1340,9 @@ function init() {
     const delta = e.target.closest("[data-delta]");
     if (delta) return nudgeTarget(parseFloat(delta.dataset.delta));
     if (e.target.closest("[data-fade]")) return toggleFade();
+    const ctl = e.target.closest("[data-ctl]");
+    if (ctl) return sonosControl(ctl.dataset.ctl);
+    if (e.target.closest("#sonos-tv")) return sonosControl("tv");
     const mute = e.target.closest("[data-mute]");
     if (mute) return toggleMute(mute.dataset.mute);
     const sw = e.target.closest("[data-device]");

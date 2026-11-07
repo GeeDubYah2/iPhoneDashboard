@@ -293,6 +293,30 @@ input {
 .np-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .np-paused .np-art, .np-paused .np-title { opacity: .6; }
 .np + .row { border-top: 0; }
+#sonos { position: relative; }
+.corner-btn {
+  position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 0;
+  display: grid; place-items: center;
+}
+.corner-btn .icon { width: 18px; height: 18px; }
+.corner-btn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.icon .solid { fill: currentColor; stroke: none; }
+.transport { display: flex; align-items: center; justify-content: space-between; padding: 10px 4px 0; border-top: 1px solid var(--line); }
+.tp {
+  position: relative; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--text); display: grid; place-items: center;
+}
+.tp .icon { width: 24px; height: 24px; }
+.tp[aria-pressed="false"] { color: var(--muted); }
+.tp[aria-pressed="true"] { color: var(--accent); }
+.tp:disabled { opacity: .3; }
+.tp-main { width: 56px; height: 56px; background: var(--text); color: var(--bg); }
+.tp-main .icon { width: 26px; height: 26px; }
+.tp-one {
+  position: absolute; top: 6px; right: 5px; min-width: 14px; height: 14px; border-radius: 7px;
+  background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; line-height: 14px;
+}
 .sonos-fade { display: block; width: 100%; margin-top: 10px; background: var(--line); color: var(--text); font-variant-numeric: tabular-nums; }
 .sonos-fade[aria-pressed="true"] { background: var(--accent); color: #fff; }
 .sonos-fade:disabled { opacity: .6; }
