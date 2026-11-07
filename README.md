@@ -34,7 +34,7 @@ The dashboard expects these endpoints (HTTPS, with `Authorization: Bearer <token
 | `GET /tuya/devices` | `[{ "id": "…", "name": "…", "on": true }]` |
 | `POST /tuya/devices/:id` | `{ "on": true }` |
 
-Enter the token once under the **Settings** tab on your phone. It's stored only in that browser.
+There's no token box in Settings for now. It will come back when the backend is built.
 
 Notes on the integrations (check current status before relying on them):
 
