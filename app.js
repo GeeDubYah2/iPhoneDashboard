@@ -407,16 +407,39 @@ function loadApps() {
     `<a class="app-btn" href="${esc(appLink(a.target))}">${appIcon(a, "app-icon") || ICON_OPEN}<span>${esc(a.label)}</span></a>`).join("")}</div>`);
 }
 
-function renderAppRows() {
-  const saved = getSettings().apps || [];
-  $("#app-rows").innerHTML = Array.from({ length: APP_SLOTS }, (_, i) => {
-    const a = saved[i] || {};
+const ICON_UP = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>';
+const ICON_DOWN = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+
+// The rows being edited in Settings, including icons found earlier.
+let appDraft = [];
+
+function renderAppRows(rows = getSettings().apps || []) {
+  appDraft = Array.from({ length: APP_SLOTS }, (_, i) => ({ ...(rows[i] || {}) }));
+  $("#app-rows").innerHTML = appDraft.map((a, i) => {
     const preview = appIcon(a, "app-preview") || `<span class="app-preview"></span>`;
     return `<div class="app-row" title="${esc(a.storeName || "")}">${preview}` +
       `<input data-app-label="${i}" type="text" placeholder="Label" value="${esc(a.label || "")}" autocomplete="off" aria-label="Button ${i + 1} label">` +
       `<input data-app-target="${i}" type="text" placeholder="Shortcut name or link" value="${esc(a.target || "")}" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" aria-label="Button ${i + 1} shortcut or link">` +
-      `</div>`;
+      `<div class="app-move">` +
+      `<button type="button" data-app-move="${i}:-1" aria-label="Move button ${i + 1} up"${i === 0 ? " disabled" : ""}>${ICON_UP}</button>` +
+      `<button type="button" data-app-move="${i}:1" aria-label="Move button ${i + 1} down"${i === APP_SLOTS - 1 ? " disabled" : ""}>${ICON_DOWN}</button>` +
+      `</div></div>`;
   }).join("");
+}
+
+// Swaps a row with its neighbour, keeping anything typed but not yet saved.
+// The new order takes effect when you tap Save.
+function moveAppRow(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= APP_SLOTS) return;
+  const rows = appDraft.map((a, k) => ({
+    ...a,
+    label: $(`[data-app-label="${k}"]`).value,
+    target: $(`[data-app-target="${k}"]`).value,
+  }));
+  [rows[i], rows[j]] = [rows[j], rows[i]];
+  renderAppRows(rows);
+  $(`[data-app-move="${j}:${dir}"]`)?.focus();
 }
 
 async function saveAppSettings() {
@@ -436,7 +459,7 @@ async function saveAppSettings() {
   btn.disabled = true;
   btn.textContent = "Finding icons…";
   await Promise.all(apps.map(async (a) => {
-    const prev = old.find((o) => o.label === a.label && o.icon);
+    const prev = [...old, ...appDraft].find((o) => o.label === a.label && o.icon);
     const found = prev ? { icon: prev.icon, storeName: prev.storeName } : await findAppIcon(a.label);
     if (found?.icon) Object.assign(a, found);
   }));
@@ -631,6 +654,11 @@ function init() {
   document.addEventListener("click", (e) => {
     const zoom = e.target.closest("[data-zoom]");
     if (zoom) return zoomCamera(zoom);
+    const move = e.target.closest("[data-app-move]");
+    if (move) {
+      const [i, dir] = move.dataset.appMove.split(":").map(Number);
+      return moveAppRow(i, dir);
+    }
     const delta = e.target.closest("[data-delta]");
     if (delta) return nudgeTarget(parseFloat(delta.dataset.delta));
     const sw = e.target.closest("[data-device]");

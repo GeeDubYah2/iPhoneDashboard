@@ -112,7 +112,8 @@ p { margin: 0; }
 #zoom img { max-width: 100%; max-height: 80vh; border-radius: 12px; }
 
 /* App buttons */
-.apps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.apps { display: flex; flex-wrap: wrap; gap: 10px 6px; }
+.apps .app-btn { width: 70px; }
 .app-btn {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
   padding: 4px 2px; color: var(--text); font-size: 13px; text-decoration: none; text-align: center;
@@ -125,7 +126,14 @@ p { margin: 0; }
   border: 1px solid var(--line); border-radius: 11px; /* stands in for a missing app icon */
 }
 .app-icon { width: 48px; height: 48px; border-radius: 11px; flex: none; }
-.app-row { display: grid; grid-template-columns: 30px 2fr 3fr; gap: 8px; align-items: center; }
+.app-row { display: grid; grid-template-columns: 30px minmax(0, 2fr) minmax(0, 3fr) 30px; gap: 8px; align-items: center; }
+.app-move { display: flex; flex-direction: column; gap: 2px; }
+.app-move button {
+  width: 30px; height: 22px; padding: 0; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--text); display: grid; place-items: center;
+}
+.app-move button:disabled { opacity: .3; }
+.app-move .icon { width: 14px; height: 14px; stroke-width: 2.2; }
 .app-preview { width: 30px; height: 30px; border-radius: 7px; background: var(--bg); border: 1px dashed var(--line); }
 img.app-preview { border: 0; }
 .app-row input { margin: 6px 0; }
