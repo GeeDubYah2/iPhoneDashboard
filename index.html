@@ -46,6 +46,29 @@
           <button id="save-token" class="btn">Save</button>
         </div>
       </article>
+
+      <article class="card" id="places">
+        <h2>Your places</h2>
+        <div class="body">
+          <label class="small muted" for="town">Fallback town (used if your location isn't available)</label>
+          <input id="town" type="text" placeholder="e.g. Leeds" autocomplete="off">
+
+          <label class="small muted" for="stationA">Station A (3-letter code)</label>
+          <input id="stationA" type="text" maxlength="3" placeholder="e.g. LDS" autocapitalize="characters" autocomplete="off">
+
+          <label class="small muted" for="stationB">Station B (3-letter code)</label>
+          <input id="stationB" type="text" maxlength="3" placeholder="e.g. KGX" autocapitalize="characters" autocomplete="off">
+
+          <label class="small muted" for="switchHour">Switch hour (0 to 23, London time)</label>
+          <input id="switchHour" type="number" min="0" max="23" inputmode="numeric" placeholder="12">
+
+          <label class="small muted" for="operator">Train operator code (optional)</label>
+          <input id="operator" type="text" maxlength="2" placeholder="e.g. VT" autocapitalize="characters" autocomplete="off">
+
+          <p class="small muted">Before the switch hour the trains card shows A to B; from then on, B to A. Everything here is saved only on this phone.</p>
+          <button id="save-places" class="btn" style="margin-top:12px">Save</button>
+        </div>
+      </article>
     </section>
   </main>
 
