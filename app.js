@@ -7,11 +7,17 @@
 ------------------------------------------------------------------- */
 const CONFIG = {
   apiBase: "", // e.g. "https://dashboard-api.example.com" (HTTPS, no trailing slash)
-  weather: { name: "London", lat: 51.5072, lon: -0.1276 },
+  weather: {
+    useDeviceLocation: true, // ask the phone for its location; falls back to the place below
+    name: "London", lat: 51.5072, lon: -0.1276,
+  },
   trains: {
-    from: "KGX", // 3-letter station code to depart from
-    to: "",      // optional destination code, e.g. "PBO"; leave "" for all
+    // Which route to show depends on the time of day in London (3-letter station codes).
+    morning: { from: "LDS", to: "KGX" },   // before switchHour: Leeds to London Kings Cross
+    afternoon: { from: "KGX", to: "LDS" }, // from switchHour: London Kings Cross to Leeds
+    switchHour: 12,
     rows: 4,
+    operatorCode: "", // e.g. "VT" for one operator; "" shows every operator
     api: "https://huxley2.azurewebsites.net", // unofficial National Rail proxy
   },
   cameraRefreshSeconds: 15,
@@ -68,55 +74,70 @@ const WMO = {
 };
 const wx = (code) => WMO[code] || ["🌡️", ""];
 
+function getPosition() {
+  return new Promise((resolve) => {
+    if (!CONFIG.weather.useDeviceLocation || !navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+      () => resolve(null), // declined, unavailable or timed out
+      { timeout: 8000, maximumAge: 10 * 60 * 1000 }
+    );
+  });
+}
+
+function cachedPosition() {
+  if (!CONFIG.weather.useDeviceLocation) return null;
+  try { return JSON.parse(store.get("loc")) || null; } catch { return null; }
+}
+
 async function loadWeather() {
-  const { lat, lon, name } = CONFIG.weather;
+  let { lat, lon, name } = CONFIG.weather;
+  const pos = (await getPosition()) || cachedPosition();
+  if (pos) {
+    ({ lat, lon } = pos);
+    name = "Your location";
+    store.set("loc", JSON.stringify(pos));
+  }
   const url = "https://api.open-meteo.com/v1/forecast" +
     `?latitude=${lat}&longitude=${lon}` +
-    "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m" +
-    "&hourly=temperature_2m,weather_code,precipitation_probability" +
-    "&daily=temperature_2m_max,temperature_2m_min,weather_code" +
-    "&timezone=auto&forecast_days=4&wind_speed_unit=mph";
+    "&current=temperature_2m,weather_code" +
+    "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
+    "&timezone=auto&forecast_days=1";
   const res = await fetch(url);
   if (!res.ok) throw new Error("weather " + res.status);
   const d = await res.json();
 
-  const c = d.current;
-  const [icon, label] = wx(c.weather_code);
-  const start = Math.max(0, d.hourly.time.findIndex((t) => t > c.time));
-
-  const hours = d.hourly.time.slice(start, start + 8).map((t, i) => {
-    const j = start + i;
-    return `<div><span class="small muted">${t.slice(11, 16)}</span>` +
-      `<span class="big-icon">${wx(d.hourly.weather_code[j])[0]}</span>` +
-      `<b>${Math.round(d.hourly.temperature_2m[j])}°</b>` +
-      `<span class="small muted">${d.hourly.precipitation_probability[j] ?? 0}%</span></div>`;
-  }).join("");
-
-  const days = d.daily.time.map((t, i) => {
-    const day = i === 0 ? "Today" : new Date(t + "T12:00").toLocaleDateString("en-GB", { weekday: "short" });
-    return `<div class="row"><span class="grow">${day}</span><span>${wx(d.daily.weather_code[i])[0]}</span>` +
-      `<span class="small muted">${Math.round(d.daily.temperature_2m_min[i])}°</span>` +
-      `<b>${Math.round(d.daily.temperature_2m_max[i])}°</b></div>`;
-  }).join("");
+  const [icon, label] = wx(d.current.weather_code);
+  const todayLabel = wx(d.daily.weather_code[0])[1];
+  const rain = d.daily.precipitation_probability_max?.[0];
 
   setBody("weather",
-    `<div class="wx-now"><span class="temp">${Math.round(c.temperature_2m)}°</span>` +
-    `<div><div>${icon} ${label}</div><div class="muted small">Feels ${Math.round(c.apparent_temperature)}° · ` +
-    `Wind ${Math.round(c.wind_speed_10m)} mph · ${esc(name)}</div></div></div>` +
-    `<div class="strip">${hours}</div>${days}`);
+    `<div class="wx-now"><span class="temp">${Math.round(d.current.temperature_2m)}°</span>` +
+    `<div><div>${icon} ${label}</div><div class="muted small">${esc(name)}</div></div></div>` +
+    `<p class="muted">Today: ${todayLabel ? todayLabel.toLowerCase() + ", " : ""}` +
+    `${Math.round(d.daily.temperature_2m_min[0])}° to ${Math.round(d.daily.temperature_2m_max[0])}°` +
+    `${rain != null ? `, ${rain}% chance of rain` : ""}</p>`);
 }
 
 /* ----------------------------- Trains ----------------------------- */
 
+function londonHour() {
+  return Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", hourCycle: "h23" }).format(new Date()));
+}
+
 async function loadTrains() {
-  const { from, to, rows, api: base } = CONFIG.trains;
-  const path = to ? `/departures/${from}/to/${to}/${rows}` : `/departures/${from}/${rows}`;
-  const res = await fetch(base + path);
+  const t = CONFIG.trains;
+  const { from, to } = londonHour() < t.switchHour ? t.morning : t.afternoon;
+  const fetchRows = t.operatorCode ? t.rows * 3 : t.rows; // fetch extra, then filter by operator
+  const res = await fetch(`${t.api}/departures/${from}/to/${to}/${fetchRows}`);
   if (!res.ok) throw new Error("departure board " + res.status);
   const d = await res.json();
-  const list = d.trainServices || [];
+  const list = (d.trainServices || [])
+    .filter((s) => !t.operatorCode || !s.operatorCode || s.operatorCode === t.operatorCode)
+    .slice(0, t.rows);
   const station = esc(d.locationName || from);
-  if (!list.length) return setBody("trains", `<p class="muted">No upcoming departures from ${station}.</p>`);
+  const route = `${station} to ${esc(d.filterLocationName || to)}`;
+  if (!list.length) return setBody("trains", `<p class="muted">No upcoming trains from ${route}.</p>`);
 
   const items = list.map((s) => {
     const status = s.isCancelled ? "Cancelled" : s.etd;
@@ -126,7 +147,7 @@ async function loadTrains() {
     return `<div class="row"><span class="time">${esc(s.std)}</span>` +
       `<span class="grow">${dest}${plat}</span><span class="${cls}">${esc(status)}</span></div>`;
   }).join("");
-  setBody("trains", `<p class="muted small">Departing ${station}</p>${items}`);
+  setBody("trains", `<p class="muted small">${route}</p>${items}`);
 }
 
 /* --------------------------- Thermostat --------------------------- */
