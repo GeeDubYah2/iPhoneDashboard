@@ -363,6 +363,57 @@ function saveRingSettings() {
   loadAll();
 }
 
+/* ------------------------------ Apps ------------------------------ */
+// Buttons that open iPhone apps, set up in Settings (stored on this phone only).
+// A plain name runs the Shortcut with that name; a link like "someapp://" is used as is.
+
+const APP_SLOTS = 6;
+const ICON_OPEN = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>';
+
+function appLink(target) {
+  const t = target.trim();
+  const scheme = t.match(/^([a-z][a-z0-9+.-]*):/i)?.[1].toLowerCase();
+  if (!scheme) return "shortcuts://run-shortcut?name=" + encodeURIComponent(t);
+  return ["javascript", "data", "vbscript", "file", "blob"].includes(scheme) ? "" : t;
+}
+
+function loadApps() {
+  const apps = (getSettings().apps || []).filter((a) => a.label && a.target && appLink(a.target));
+  if (!apps.length) {
+    return setBody("apps", `<p class="muted small">Add buttons for your apps in Settings → App buttons.</p>`);
+  }
+  setBody("apps", `<div class="apps">${apps.map((a) =>
+    `<a class="app-btn" href="${esc(appLink(a.target))}">${ICON_OPEN}<span>${esc(a.label)}</span></a>`).join("")}</div>`);
+}
+
+function renderAppRows() {
+  const saved = getSettings().apps || [];
+  $("#app-rows").innerHTML = Array.from({ length: APP_SLOTS }, (_, i) => {
+    const a = saved[i] || {};
+    return `<div class="app-row">` +
+      `<input data-app-label="${i}" type="text" placeholder="Label" value="${esc(a.label || "")}" autocomplete="off" aria-label="Button ${i + 1} label">` +
+      `<input data-app-target="${i}" type="text" placeholder="Shortcut name or link" value="${esc(a.target || "")}" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" aria-label="Button ${i + 1} shortcut or link">` +
+      `</div>`;
+  }).join("");
+}
+
+function saveAppSettings() {
+  const apps = [];
+  for (let i = 0; i < APP_SLOTS; i++) {
+    const label = $(`[data-app-label="${i}"]`).value.trim();
+    const target = $(`[data-app-target="${i}"]`).value.trim();
+    if (!label && !target) continue;
+    if (!label || !target) return toast(`Button ${i + 1} needs both a label and a Shortcut name`);
+    if (!appLink(target)) return toast(`Button ${i + 1} has a link type that isn't allowed`);
+    apps.push({ label, target });
+  }
+  const next = getSettings();
+  if (apps.length) next.apps = apps; else delete next.apps;
+  saveSettings(next);
+  renderAppRows();
+  toast("Saved");
+}
+
 /* ---------------------------- Calendar ---------------------------- */
 
 function demoEvents() {
@@ -430,7 +481,7 @@ let currentTab = "home";
 
 const LOADERS = {
   weather: loadWeather, trains: loadTrains, thermostat: loadThermostat,
-  camera: loadCamera, calendar: loadCalendar, tuya: loadDevices, status: loadStatus,
+  camera: loadCamera, calendar: loadCalendar, tuya: loadDevices, status: loadStatus, apps: loadApps,
 };
 
 async function guard(id) {
@@ -439,7 +490,7 @@ async function guard(id) {
 }
 
 function loadAll() {
-  const ids = currentTab === "devices" ? ["tuya"] : currentTab === "home" ? ["weather", "trains", "camera"] /* add "thermostat" and "calendar" back here, plus their cards in index.html */
+  const ids = currentTab === "devices" ? ["tuya"] : currentTab === "home" ? ["weather", "trains", "camera", "apps"] /* add "thermostat" and "calendar" back here, plus their cards in index.html */
     : currentTab === "settings" ? ["status"] : [];
   ids.forEach(guard);
 }
@@ -536,6 +587,8 @@ function init() {
   $("#ringUrl").value = saved.ring?.url || "";
   $("#ringToken").value = saved.ring?.token || "";
   $("#save-ring").addEventListener("click", saveRingSettings);
+  renderAppRows();
+  $("#save-apps").addEventListener("click", saveAppSettings);
   $("#zoom").addEventListener("click", () => { $("#zoom").hidden = true; });
 
   document.addEventListener("click", (e) => {

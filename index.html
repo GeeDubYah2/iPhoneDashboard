@@ -32,6 +32,7 @@
       </article>
       <article class="card" id="trains"><h2>Trains</h2><div class="body muted">Loading…</div></article>
       <article class="card" id="camera"><h2>Camera</h2><div class="body muted">Loading…</div></article>
+      <article class="card" id="apps"><h2>Apps</h2><div class="body muted">Loading…</div></article>
     </section>
 
     <section id="page-devices" class="page" hidden>
@@ -91,6 +92,15 @@
 
           <p class="small muted">The helper runs on your home PC and fetches the snapshots from Ring. Saved only on this phone. Leave the address blank to show demo tiles.</p>
           <button id="save-ring" class="btn" style="margin-top:12px">Save</button>
+        </div>
+      </article>
+
+      <article class="card" id="apps-settings">
+        <h2>App buttons</h2>
+        <div class="body">
+          <p class="small muted">Each button runs a Shortcut with that name. In the Shortcuts app, make one with a single "Open App" action. You can also paste an app link (e.g. one starting with an app's own scheme). Leave a row blank to hide it. Saved only on this phone.</p>
+          <div id="app-rows"></div>
+          <button id="save-apps" class="btn" style="margin-top:12px">Save</button>
         </div>
       </article>
     </section>
