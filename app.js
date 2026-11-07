@@ -194,7 +194,7 @@ async function loadTrains() {
     return setBody("trains", `<p class="muted">Set your two stations in Settings to see trains.</p>`);
   }
   const switchHour = Number.isInteger(cfg.switchHour) ? cfg.switchHour : 12;
-  // Before the switch hour (London time): A to B. From then on: B to A.
+  // Before the switch hour (London time): Home (stationA) to Work (stationB). From then on: Work to Home.
   const [from, to] = londonHour() < switchHour ? [cfg.stationA, cfg.stationB] : [cfg.stationB, cfg.stationA];
   const operator = cfg.operator !== undefined ? cfg.operator : t.operator;
   const fetchRows = operator ? t.rows * 3 : t.rows; // fetch extra, then filter by operator
