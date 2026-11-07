@@ -121,9 +121,14 @@ function showingWork() {
   return store.get("wxPlace") === "work" && Boolean(getSettings().work);
 }
 
+const ICON_WORK = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5.5A1.5 1.5 0 0 1 9.5 4h5A1.5 1.5 0 0 1 16 5.5V7M3 13h18"/></svg>';
+const ICON_HOME = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9v11a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9"/></svg>';
+
+// Shows a briefcase while home weather is on screen, and a house while work weather is.
 function updateWorkButton() {
   const on = showingWork();
   const btn = $("#wx-work");
+  btn.innerHTML = on ? ICON_HOME : ICON_WORK;
   btn.setAttribute("aria-pressed", String(on));
   btn.setAttribute("aria-label", on ? "Show weather at home" : "Show weather at work");
 }
@@ -521,6 +526,7 @@ function init() {
   $("#town").value = saved.town?.name || "";
   $("#workTown").value = saved.work?.name || "";
   $("#wx-work").addEventListener("click", toggleWorkWeather);
+  updateWorkButton();
   $("#stationA").value = saved.stationA || "";
   $("#stationB").value = saved.stationB || "";
   $("#switchHour").value = Number.isInteger(saved.switchHour) ? saved.switchHour : "";

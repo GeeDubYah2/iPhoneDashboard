@@ -66,9 +66,14 @@ p { margin: 0; }
 #weather { position: relative; }
 .wx-toggle {
   position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; border-radius: 50%;
-  border: 1px solid var(--line); background: var(--bg); font-size: 17px; line-height: 1; padding: 0;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 0;
+  display: grid; place-items: center;
 }
-.wx-toggle[aria-pressed="true"] { border-color: var(--accent); background: rgba(77, 163, 255, .18); }
+.wx-toggle .icon { width: 18px; height: 18px; }
+
+/* Line icons: drawn in the current text colour */
+.icon { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.icon .teeth { stroke-width: 2.6; stroke-linecap: butt; }
 .wx-now { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
 .temp { font-size: 48px; font-weight: 300; line-height: 1; }
 .strip { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 12px; scrollbar-width: none; }
@@ -139,7 +144,7 @@ nav {
   border-top: 1px solid var(--line);
 }
 nav button { border: 0; background: none; color: var(--muted); font-size: 12px; min-height: 48px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
-nav button span { font-size: 20px; }
+nav button .icon { width: 24px; height: 24px; }
 nav button.active { color: var(--accent); }
 
 #toast {
