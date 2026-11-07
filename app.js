@@ -205,28 +205,106 @@ async function loadTrains() {
     .slice(0, t.rows);
   const station = esc(d.locationName || from);
   const route = `${station} to ${esc(d.filterLocationName || to)}`;
-  if (!list.length) return setBody("trains", `<p class="muted">No upcoming trains from ${route}.</p>`);
 
   trainRoute = { from, to };
-  const items = list.map((s) => {
-    const status = s.isCancelled ? "Cancelled" : s.etd;
-    const cls = s.isCancelled ? "bad" : status === "On time" ? "good" : "warn";
-    const dest = esc(s.destination?.[0]?.locationName || "");
-    const plat = s.platform ? ` <span class="muted small">pl. ${esc(s.platform)}</span>` : "";
+  trainList = list.map((s) => {
     // Expected arrival at your destination: the live estimate if there is one, otherwise the timetable.
     const stop = (s.subsequentCallingPoints || []).flatMap((g) => g.callingPoint || []).find((p) => p.crs === to);
-    const arr = stop ? (/^\d\d:\d\d$/.test(stop.et) ? stop.et : stop.st) : "";
-    const arrives = arr ? `<div class="muted small">Arrives ${esc(arr)}</div>` : "";
-    const id = esc(s.serviceIdGuid || "");
-    return `<div class="row train" role="button" tabindex="0" aria-expanded="false" data-train="${id}">` +
-      `<span class="time">${esc(s.std)}</span>` +
-      `<span class="grow">${dest}${plat}${arrives}</span><span class="${cls}">${esc(status)}</span>` +
-      `<span class="chev" aria-hidden="true">${ICON_CHEVRON}</span></div>` +
-      `<div class="train-detail" data-train-detail="${id}" hidden></div>`;
-  }).join("");
-  setBody("trains", `<p class="muted small">${route} · tap a train for its journey</p>${items}`);
-  if (openTrain && list.some((s) => s.serviceIdGuid === openTrain)) loadTrainDetail(openTrain);
+    return {
+      id: s.serviceIdGuid || "",
+      std: s.std,
+      status: s.isCancelled ? "Cancelled" : s.etd,
+      cancelled: s.isCancelled,
+      dest: s.destination?.[0]?.locationName || "",
+      platform: s.platform || "",
+      arr: stop ? (isTime(stop.et) ? stop.et : stop.st) : "",
+      from, to,
+    };
+  });
+
+  // The train you're on stays at the top, even after it has left your station.
+  const mine = getMyTrain();
+  const mineGone = mine && !trainList.some((x) => x.id === mine.id);
+  const items = (mineGone ? [{ ...mine, departed: true }] : []).concat(trainList).map(trainRow).join("");
+
+  if (!items) return setBody("trains", `<p class="muted">No upcoming trains from ${route}.</p>`);
+  setBody("trains", `<p class="muted small">${route} · tap a train for its journey, tap ○ for the train you're on</p>${items}`);
+
+  if (mineGone && !openTrain) openTrain = mine.id; // show where your train is
+  const shown = [...(mineGone ? [mine.id] : []), ...trainList.map((x) => x.id)];
+  if (openTrain && shown.includes(openTrain)) loadTrainDetail(openTrain);
   else openTrain = null;
+}
+
+function trainRow(s) {
+  const id = esc(s.id);
+  const picked = getMyTrain()?.id === s.id;
+  const status = s.departed ? "Departed" : s.status;
+  const cls = s.departed ? "muted" : s.cancelled ? "bad" : status === "On time" ? "good" : "warn";
+  const plat = s.platform && !s.departed ? ` <span class="muted small">pl. ${esc(s.platform)}</span>` : "";
+  const arrives = s.arr ? `<div class="muted small">Arrives ${esc(s.arr)}</div>` : "";
+  const pick = `<button type="button" class="pick" data-pick="${id}" aria-pressed="${picked}" ` +
+    `aria-label="${picked ? "Stop following" : "I'm on"} the ${esc(s.std)} to ${esc(s.dest)}">${picked ? ICON_TICK : ""}</button>`;
+  return `<div class="row train${picked ? " picked" : ""}" role="button" tabindex="0" aria-expanded="false" data-train="${id}">` +
+    `${pick}<span class="time">${esc(s.std)}</span>` +
+    `<span class="grow">${esc(s.dest)}${plat}${arrives}</span><span class="${cls}">${esc(status)}</span>` +
+    `<span class="chev" aria-hidden="true">${ICON_CHEVRON}</span></div>` +
+    `<div class="train-detail" data-train-detail="${id}" hidden></div>`;
+}
+
+/* ------------------------ The train you're on ------------------------ */
+// Saved on this phone. Clears itself after 4 hours in case you forget.
+
+const ICON_TICK = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12.5l4 4 8-9"/></svg>';
+const MY_TRAIN_HOURS = 4;
+let trainList = [];
+
+function getMyTrain() {
+  try {
+    const t = JSON.parse(store.get("myTrain"));
+    if (t?.id && Date.now() - t.pickedAt < MY_TRAIN_HOURS * 3600 * 1000) return t;
+  } catch { /* nothing saved */ }
+  return null;
+}
+
+async function togglePick(id) {
+  const mine = getMyTrain();
+  if (mine?.id === id) {
+    const ok = await confirmSheet(`Stop following the ${mine.std} to ${mine.dest}?`, "Yes, stop");
+    if (!ok) return;
+    store.set("myTrain", "");
+    if (openTrain === id) openTrain = null;
+  } else {
+    const t = trainList.find((x) => x.id === id);
+    if (!t) return;
+    store.set("myTrain", JSON.stringify({ ...t, pickedAt: Date.now() }));
+  }
+  guard("trains");
+}
+
+// A small panel that slides up from the bottom; resolves true for the main button.
+function confirmSheet(text, okLabel) {
+  const sheet = $("#sheet");
+  $("#sheet-text").textContent = text;
+  $("#sheet-ok").textContent = okLabel;
+  sheet.hidden = false;
+  requestAnimationFrame(() => sheet.classList.add("open"));
+  $("#sheet-ok").focus();
+  return new Promise((resolve) => {
+    const done = (answer) => {
+      sheet.classList.remove("open");
+      setTimeout(() => { sheet.hidden = true; }, 200);
+      sheet.onclick = null;
+      document.removeEventListener("keydown", onKey);
+      resolve(answer);
+    };
+    const onKey = (e) => { if (e.key === "Escape") done(false); };
+    document.addEventListener("keydown", onKey);
+    sheet.onclick = (e) => {
+      if (e.target.id === "sheet-ok") done(true);
+      else if (e.target.id === "sheet-cancel" || e.target === sheet) done(false);
+    };
+  });
 }
 
 /* ---------------------- Train journey details ---------------------- */
@@ -279,8 +357,21 @@ async function loadTrainDetail(id) {
     { locationName: d.locationName, crs: d.crs, st: d.std, et: d.etd, at: d.atd, platform: d.platform, isCancelled: d.isCancelled },
     ...pts(d.subsequentCallingPoints).map((p) => ({ ...p })),
   ];
+  const pinned = getMyTrain();
+  const route = pinned?.id === id ? pinned : trainRoute; // your stations for this train
   let last = -1; // last stop the train has actually left
   stops.forEach((s, i) => { if (s.at) last = i; });
+
+  // Keep the pinned train's "Arrives" time live.
+  const dest = pinned?.id === id && stops.find((s) => s.crs === pinned.to);
+  if (dest) {
+    const arr = isTime(dest.at) ? dest.at : isTime(dest.et) ? dest.et : dest.st;
+    if (arr && arr !== pinned.arr) {
+      store.set("myTrain", JSON.stringify({ ...pinned, arr }));
+      const line = row.querySelector(".grow .small");
+      if (line) line.textContent = (isTime(dest.at) ? "Arrived " : "Arrives ") + arr;
+    }
+  }
 
   let where;
   if (d.isCancelled) where = `<span class="bad">This train is cancelled</span>${d.cancelReason ? ` · ${esc(d.cancelReason)}` : ""}`;
@@ -294,7 +385,7 @@ async function loadTrainDetail(id) {
 
   const items = stops.map((s, i) => {
     const passed = i <= last;
-    const mine = s.crs === trainRoute.from || s.crs === trainRoute.to;
+    const mine = s.crs === route.from || s.crs === route.to;
     const cancelled = s.isCancelled || s.et === "Cancelled";
     let time = s.st;
     let note = "";
@@ -798,6 +889,8 @@ function init() {
   document.addEventListener("click", (e) => {
     const zoom = e.target.closest("[data-zoom]");
     if (zoom) return zoomCamera(zoom);
+    const pick = e.target.closest("[data-pick]");
+    if (pick) return togglePick(pick.dataset.pick);
     const train = e.target.closest("[data-train]");
     if (train && train.dataset.train) return toggleTrain(train.dataset.train);
     const delta = e.target.closest("[data-delta]");
@@ -820,6 +913,7 @@ function init() {
     if (openTrain && currentTab === "home" && document.visibilityState === "visible") loadTrainDetail(openTrain);
   }, 60 * 1000);
   document.addEventListener("keydown", (e) => {
+    if (e.target.closest?.("[data-pick]")) return; // the select button handles its own keys
     const train = e.target.closest?.("[data-train]");
     if (train && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggleTrain(train.dataset.train); }
   });
