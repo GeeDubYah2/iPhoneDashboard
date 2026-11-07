@@ -190,6 +190,7 @@ async function loadTrains() {
   const t = CONFIG.trains;
   const cfg = getSettings();
   if (!cfg.stationA || !cfg.stationB) {
+    $("#train-route").textContent = "";
     return setBody("trains", `<p class="muted">Set your two stations in Settings to see trains.</p>`);
   }
   const switchHour = Number.isInteger(cfg.switchHour) ? cfg.switchHour : 12;
@@ -203,8 +204,8 @@ async function loadTrains() {
   const list = (d.trainServices || [])
     .filter((x) => !operator || !x.operatorCode || x.operatorCode === operator)
     .slice(0, t.rows);
-  const station = esc(d.locationName || from);
-  const route = `${station} to ${esc(d.filterLocationName || to)}`;
+  const route = `${d.locationName || from} to ${d.filterLocationName || to}`;
+  $("#train-route").textContent = route; // shown beside the "Trains" label
 
   trainRoute = { from, to };
   trainList = list.map((s) => {
@@ -227,8 +228,8 @@ async function loadTrains() {
   const mineGone = mine && !trainList.some((x) => x.id === mine.id);
   const items = (mineGone ? [{ ...mine, departed: true }] : []).concat(trainList).map(trainRow).join("");
 
-  if (!items) return setBody("trains", `<p class="muted">No upcoming trains from ${route}.</p>`);
-  setBody("trains", `<p class="muted small">${route} · tap a train for its journey, tap ○ for the train you're on</p>${items}`);
+  if (!items) return setBody("trains", `<p class="muted">No upcoming trains.</p>`);
+  setBody("trains", items);
 
   if (mineGone && !openTrain) openTrain = mine.id; // show where your train is
   const shown = [...(mineGone ? [mine.id] : []), ...trainList.map((x) => x.id)];

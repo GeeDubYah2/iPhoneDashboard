@@ -32,6 +32,8 @@ header { display: flex; justify-content: space-between; align-items: center; pad
 h1 { margin: 0; font-size: 26px; }
 h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 p { margin: 0; }
+/* Extra detail beside a card label, in the normal body style */
+.h2-note { margin-left: 6px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text); }
 
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
