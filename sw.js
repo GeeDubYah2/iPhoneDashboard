@@ -1,6 +1,6 @@
 // Network-first service worker: updates deploy immediately,
 // and the app shell still opens when you're offline.
-const CACHE = "dashboard-v3";
+const CACHE = "dashboard-v4";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
