@@ -6,7 +6,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { loadVapid, sendPush } from "./push.js";
 
-const TRAINS_API = "https://huxley2.azurewebsites.net";
+// Unofficial National Rail proxies. Tried in turn: if one fails, the next takes over.
+const TRAINS_APIS = ["https://huxley2.azurewebsites.net", "https://mobicianrail.azurewebsites.net"];
 const ALERT_MINUTES = Number(process.env.ALERT_MINUTES || 10);
 const WATCH_HOURS = 4;
 const SUBJECT = process.env.PUSH_SUBJECT || "https://geedubyah2.github.io/iPhoneDashboard/";
@@ -69,6 +70,23 @@ function minutesUntil(hhmm) {
   return diff > 720 ? diff - 1440 : diff;
 }
 
+// Fetches from the train server that last worked, moving to the next one if it errors or hangs.
+let trainApi = 0;
+async function fetchTrains(path) {
+  let failure;
+  for (let i = 0; i < TRAINS_APIS.length; i++) {
+    const n = (trainApi + i) % TRAINS_APIS.length;
+    try {
+      const res = await fetch(TRAINS_APIS[n] + path, { signal: AbortSignal.timeout(15000) });
+      if (!res.ok) throw new Error("train server " + res.status);
+      const data = await res.json();
+      trainApi = n;
+      return data;
+    } catch (e) { failure = e; }
+  }
+  throw failure;
+}
+
 let checking = false;
 export async function checkTrains() {
   if (checking) return;
@@ -77,9 +95,7 @@ export async function checkTrains() {
     for (const w of [...state.watches]) {
       if (Date.now() - w.since > WATCH_HOURS * 3600 * 1000) { unwatchTrain(); continue; }
       if (w.notified) continue;
-      const res = await fetch(`${TRAINS_API}/service/${encodeURIComponent(w.id)}`, { signal: AbortSignal.timeout(15000) });
-      if (!res.ok) continue;
-      const d = await res.json();
+      const d = await fetchTrains(`/service/${encodeURIComponent(w.id)}`);
       const pts = (g) => (g || []).flatMap((x) => x.callingPoint || []);
       const stops = [...pts(d.previousCallingPoints), { crs: d.crs, st: d.std, et: d.etd, at: d.atd }, ...pts(d.subsequentCallingPoints)];
       const stop = stops.find((s) => s.crs === w.crs);

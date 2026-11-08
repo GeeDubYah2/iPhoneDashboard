@@ -15,7 +15,8 @@ const CONFIG = {
     // Your stations, switch hour and operator are set in the Settings tab (stored on your phone only).
     rows: 2, // how many upcoming trains to show
     operator: "", // default train operator code, e.g. "VT"; blank means every operator
-    api: "https://huxley2.azurewebsites.net", // unofficial National Rail proxy
+    // Unofficial National Rail proxies. Tried in turn: if one fails, the next takes over.
+    apis: ["https://huxley2.azurewebsites.net", "https://mobicianrail.azurewebsites.net"],
   },
   cameraRefreshSeconds: 60, // Ring battery cameras can't take snapshots much faster than this
 };
@@ -186,6 +187,24 @@ function londonHour() {
   return Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", hourCycle: "h23" }).format(new Date()));
 }
 
+// Fetches from the train server that last worked, moving to the next one if it errors or hangs.
+let trainApi = 0;
+async function fetchTrains(path) {
+  const apis = CONFIG.trains.apis;
+  let failure;
+  for (let i = 0; i < apis.length; i++) {
+    const n = (trainApi + i) % apis.length;
+    try {
+      const res = await fetch(apis[n] + path, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) throw new Error("train server " + res.status);
+      const data = await res.json();
+      trainApi = n;
+      return data;
+    } catch (e) { failure = e; }
+  }
+  throw failure;
+}
+
 async function loadTrains() {
   const t = CONFIG.trains;
   const cfg = getSettings();
@@ -198,9 +217,7 @@ async function loadTrains() {
   const [from, to] = londonHour() < switchHour ? [cfg.stationA, cfg.stationB] : [cfg.stationB, cfg.stationA];
   const operator = cfg.operator !== undefined ? cfg.operator : t.operator;
   const fetchRows = operator ? t.rows * 3 : t.rows; // fetch extra, then filter by operator
-  const res = await fetch(`${t.api}/departures/${from}/to/${to}/${fetchRows}?expand=true`); // expand adds calling points
-  if (!res.ok) throw new Error("departure board " + res.status);
-  const d = await res.json();
+  const d = await fetchTrains(`/departures/${from}/to/${to}/${fetchRows}?expand=true`); // expand adds calling points
   const list = (d.trainServices || [])
     .filter((x) => !operator || !x.operatorCode || x.operatorCode === operator)
     .slice(0, t.rows);
@@ -444,9 +461,7 @@ async function loadTrainDetail(id) {
 
   let d;
   try {
-    const res = await fetch(`${CONFIG.trains.api}/service/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) throw new Error();
-    d = await res.json();
+    d = await fetchTrains(`/service/${encodeURIComponent(id)}`);
   } catch {
     box.innerHTML = `<p class="muted small">Couldn't load this train's journey.</p>`;
     return;
